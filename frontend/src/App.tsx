@@ -19,8 +19,8 @@ export default function App() {
     <BrowserRouter>
       <AppShell>
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/" element={<Navigate to="/delivery-imports" replace />} />
+          <Route path="/dashboard" element={<Navigate to="/delivery-imports" replace />} />
           <Route path="/materials" element={<MaterialsPage />} />
           <Route path="/sites" element={<SitesPage />} />
           <Route path="/sites/agg/:siteName" element={<SiteAggDetailPage />} />

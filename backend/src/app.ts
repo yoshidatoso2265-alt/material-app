@@ -19,7 +19,7 @@ export function createApp(): express.Application {
   // ============================================================
   // CORS
   // ============================================================
-  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5175')
     .split(',')
     .map((o) => o.trim());
 

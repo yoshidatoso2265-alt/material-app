@@ -1,9 +1,11 @@
 import { NavLink } from 'react-router-dom'
+import { BarChart2, Download, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
-  { to: '/delivery-agg',     label: '集計' },
-  { to: '/delivery-imports', label: '取込' },
+  { to: '/delivery-agg',     icon: BarChart2,       label: '集計' },
+  { to: '/delivery-imports',  icon: Download,        label: '取込' },
+  { to: '/scraper',          icon: RefreshCw,       label: '自動取得' },
 ]
 
 export function MobileNav() {
@@ -13,16 +15,22 @@ export function MobileNav() {
         <NavLink
           key={item.to}
           to={item.to}
+          end
           className={({ isActive }) =>
             cn(
-              'px-8 py-2 rounded-xl text-sm font-medium transition-all',
+              'flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all',
               isActive
                 ? 'bg-white/20 text-white'
                 : 'text-white/50 hover:text-white'
             )
           }
         >
-          {item.label}
+          {({ isActive }) => (
+            <>
+              <item.icon size={18} className={isActive ? 'text-violet-300' : ''} />
+              <span>{item.label}</span>
+            </>
+          )}
         </NavLink>
       ))}
     </nav>

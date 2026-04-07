@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard,
+  Download,
   RefreshCw,
   X,
   BarChart2,
@@ -8,9 +8,9 @@ import {
 import { cn } from '@/lib/utils'
 
 const navItems = [
-  { to: '/',             icon: LayoutDashboard, label: 'ダッシュボード', end: true },
-  { to: '/scraper',      icon: RefreshCw,       label: '自動取得' },
-  { to: '/delivery-agg', icon: BarChart2,       label: '材料費集計' },
+  { to: '/delivery-imports', icon: Download,   label: '取込' },
+  { to: '/delivery-agg',    icon: BarChart2,   label: '材料費集計' },
+  { to: '/scraper',         icon: RefreshCw,   label: '自動取得' },
 ]
 
 interface SidebarProps {
