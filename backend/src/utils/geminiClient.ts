@@ -8,6 +8,45 @@ import { logger } from './logger';
 
 const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '');
 const MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+const FALLBACK_MODEL = 'gemini-2.0-flash';
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 5000;
+
+async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+/**
+ * Gemini API呼び出しをリトライ付きで実行
+ * 503エラーの場合はフォールバックモデルも試す
+ */
+async function callGeminiWithRetry(
+  contents: Parameters<ReturnType<typeof genai.getGenerativeModel>['generateContent']>[0],
+): Promise<string> {
+  const models = [MODEL, FALLBACK_MODEL];
+  for (const modelName of models) {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const model = genai.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(contents);
+        return result.response.text();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const is503 = msg.includes('503') || msg.includes('Service Unavailable') || msg.includes('high demand');
+        const is429 = msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED');
+        if ((is503 || is429) && attempt < MAX_RETRIES) {
+          logger.warn(`Gemini ${modelName} リトライ ${attempt}/${MAX_RETRIES}: ${msg.slice(0, 100)}`);
+          await sleep(RETRY_DELAY_MS * attempt);
+          continue;
+        }
+        if (is503 || is429) {
+          logger.warn(`Gemini ${modelName} 全リトライ失敗、次のモデルへ`);
+          break; // try next model
+        }
+        throw err; // non-retryable error
+      }
+    }
+  }
+  throw new Error('Gemini API: 全モデル・全リトライが失敗しました');
+}
 
 // ============================================================
 // 型定義
@@ -51,10 +90,7 @@ export async function extractDeliverySlip(pdfText: string, knownSiteNames?: stri
   const prompt = buildPrompt(pdfText, knownSiteNames);
 
   try {
-    const model = genai.getGenerativeModel({ model: MODEL });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-
+    const text = await callGeminiWithRetry(prompt);
     return parseGeminiResponse(text);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -76,8 +112,7 @@ export async function extractDeliverySlipFromPdf(pdfBuffer: Buffer, knownSiteNam
   const prompt = buildPromptForPdf(knownSiteNames);
 
   try {
-    const model = genai.getGenerativeModel({ model: MODEL });
-    const result = await model.generateContent([
+    const text = await callGeminiWithRetry([
       prompt,
       {
         inlineData: {
@@ -86,8 +121,6 @@ export async function extractDeliverySlipFromPdf(pdfBuffer: Buffer, knownSiteNam
         },
       },
     ]);
-    const text = result.response.text();
-
     return parseGeminiResponse(text);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
