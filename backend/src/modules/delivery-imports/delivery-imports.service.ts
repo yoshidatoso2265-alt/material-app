@@ -397,14 +397,11 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
 
   let dateFrom: Date;
   if (opts?.dateFrom) {
-    // 明示的な開始日指定
     dateFrom = new Date(opts.dateFrom);
   } else if (lastDate) {
-    // 差分取得: 最終納品日 -14日（取りこぼし防止のオーバーラップ）
     dateFrom = new Date(lastDate);
     dateFrom.setDate(dateFrom.getDate() - 14);
   } else {
-    // 初回: 過去1年
     dateFrom = new Date(today);
     dateFrom.setFullYear(today.getFullYear() - 1);
   }
@@ -412,9 +409,21 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
   const dateFromStr = formatDateStr(dateFrom);
   const dateToStr   = formatDateStr(today);
 
+  // ---- 期間を30日ごとに分割（化研サイトのグリッド最大100行制限対策）----
+  const CHUNK_DAYS = 30;
+  const chunks: Array<{ from: string; to: string }> = [];
+  const chunkStart = new Date(dateFrom);
+  while (chunkStart < today) {
+    const chunkEnd = new Date(chunkStart);
+    chunkEnd.setDate(chunkEnd.getDate() + CHUNK_DAYS - 1);
+    if (chunkEnd > today) chunkEnd.setTime(today.getTime());
+    chunks.push({ from: formatDateStr(chunkStart), to: formatDateStr(chunkEnd) });
+    chunkStart.setDate(chunkStart.getDate() + CHUNK_DAYS);
+  }
+
   logger.info(
     `Kaken 更新開始: ${dateFromStr}〜${dateToStr} ` +
-    `(${isFirstSync ? '初回同期' : '差分取得'})`
+    `(${isFirstSync ? '初回同期' : '差分取得'}, ${chunks.length}チャンク×${CHUNK_DAYS}日)`
   );
 
   const result: UpdateResult = {
@@ -432,25 +441,28 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
 
   const session = await launchBrowser(true); // headless=true
   try {
-    // ---- ログイン → 納品書ページ ----
-    // 【重要】日付フィルタ AJAX 適用後は vSELECTED_NNNN チェックボックスが DOM から消える。
-    // GeneXus は AJAX 再描画でチェックボックスを再生成しない（hidden GridContainerDataV のみ更新）。
-    // そのため日付フィルタを変更せず、初期ページロード時の DOM 状態（チェックボックスあり）のまま使う。
-    // デフォルト日付範囲（約4ヶ月）はすべての対象行をカバーするため問題なし。
     emit({ type: 'phase', phase: 'ログイン中…' });
     await login(session.page, loginId, password);
-    emit({ type: 'phase', phase: '一覧取得中…' });
-    await goToDeliveryPage(session.page);
 
-    // 日付フィルタを適用してからグリッドを読み取る。
-    // AJAX 適用後はチェックボックスが消えるが、後段で goToDeliveryPage() リロードするため問題ない。
-    // GeneXus はセッションにフィルタ状態を保持するため、リロード後も絞り込み結果が維持される。
-    await setDateRangeAndSearch(session.page, dateFromStr, dateToStr);
+    // ---- チャンクごとにグリッド取得 + PDF処理 ----
+    const allGridRows: Array<any> = [];
 
-    // ---- グリッドデータ読取 ----
-    const gridRows = await readGridData(session.page);
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const chunk = chunks[ci];
+      emit({ type: 'phase', phase: `一覧取得中… (${ci + 1}/${chunks.length}: ${chunk.from}〜${chunk.to})` });
+      logger.info(`チャンク ${ci + 1}/${chunks.length}: ${chunk.from}〜${chunk.to}`);
+
+      await goToDeliveryPage(session.page);
+      await setDateRangeAndSearch(session.page, chunk.from, chunk.to);
+
+      const chunkRows = await readGridData(session.page);
+      logger.info(`チャンク ${ci + 1}: グリッド ${chunkRows.length} 件取得`);
+      allGridRows.push(...chunkRows);
+    }
+
+    const gridRows = allGridRows;
     result.fetched_count = gridRows.length;
-    logger.info(`グリッド取得: ${gridRows.length} 件`);
+    logger.info(`グリッド合計: ${gridRows.length} 件 (${chunks.length}チャンク)`);
 
     if (gridRows.length === 0) {
       logger.info('取得対象なし');
