@@ -444,53 +444,104 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
     emit({ type: 'phase', phase: 'ログイン中…' });
     await login(session.page, loginId, password);
 
-    // ---- チャンクごとにグリッド取得 + PDF処理 ----
-    const allGridRows: Array<any> = [];
+    // ---- チャンクごとに グリッド読取→ZIPダウンロード→重複チェック を一気通貫 ----
+    const pdfMap = new Map<string, Buffer>();
+    const allNewRows: Array<any> = [];
+    const GRID_ONLY_CONFIDENCE = 0.2;
 
     for (let ci = 0; ci < chunks.length; ci++) {
       const chunk = chunks[ci];
-      emit({ type: 'phase', phase: `一覧取得中… (${ci + 1}/${chunks.length}: ${chunk.from}〜${chunk.to})` });
+      emit({ type: 'phase', phase: `チャンク ${ci + 1}/${chunks.length}: ${chunk.from}〜${chunk.to}` });
       logger.info(`チャンク ${ci + 1}/${chunks.length}: ${chunk.from}〜${chunk.to}`);
 
+      // グリッド読取
       await goToDeliveryPage(session.page);
       await setDateRangeAndSearch(session.page, chunk.from, chunk.to);
-
       const chunkRows = await readGridData(session.page);
       logger.info(`チャンク ${ci + 1}: グリッド ${chunkRows.length} 件取得`);
-      allGridRows.push(...chunkRows);
-    }
+      result.fetched_count += chunkRows.length;
 
-    const gridRows = allGridRows;
-    result.fetched_count = gridRows.length;
-    logger.info(`グリッド合計: ${gridRows.length} 件 (${chunks.length}チャンク)`);
+      if (chunkRows.length === 0) continue;
 
-    if (gridRows.length === 0) {
-      logger.info('取得対象なし');
-      result.duration_ms = Date.now() - startedAt;
-      return result;
-    }
-
-    // ---- 重複チェック: 新規行のみを抽出 ----
-    // parse_confidence <= 0.2 はグリッドのみ登録（PDF未取得）なので再試行する
-    const GRID_ONLY_CONFIDENCE = 0.2;
-    const newRows = gridRows.filter((row) => {
-      const slipNumber = row.slipNumber?.trim();
-      if (!slipNumber) return false;
-      const existing = repo.findByUniqueKey(slipNumber);
-      if (existing) {
-        // PDF取得済み（parse_confidence > GRID_ONLY）はスキップ
-        if ((existing.parse_confidence ?? 0) > GRID_ONLY_CONFIDENCE) {
-          result.skipped_count++;
-          return false;
+      // 重複チェック
+      const newRows = chunkRows.filter((row: any) => {
+        const slipNumber = row.slipNumber?.trim();
+        if (!slipNumber) return false;
+        const existing = repo.findByUniqueKey(slipNumber);
+        if (existing) {
+          if ((existing.parse_confidence ?? 0) > GRID_ONLY_CONFIDENCE) {
+            result.skipped_count++;
+            return false;
+          }
+          return true;
         }
-        // グリッドのみ登録（PDF未取得）は再試行
-        logger.info(`PDF再取得対象（グリッドのみ登録）: ${slipNumber} id=${existing.id}`);
         return true;
+      });
+
+      if (newRows.length === 0) {
+        logger.info(`チャンク ${ci + 1}: 新規なし（全件スキップ）`);
+        continue;
       }
-      return true;
-    });
-    logger.info(`新規取込対象: ${newRows.length} 件 (スキップ済み: ${result.skipped_count} 件)`);
-    emit({ type: 'total', total: newRows.length, skipped: result.skipped_count });
+
+      // ZIPダウンロード（このチャンクの日付フィルタ状態のまま）
+      emit({ type: 'phase', phase: `PDF取得中… (${ci + 1}/${chunks.length})` });
+      await goToDeliveryPage(session.page);
+      // 同じチャンクの日付フィルタを再適用
+      await setDateRangeAndSearch(session.page, chunk.from, chunk.to);
+
+      const totalPages = await getTotalPages(session.page);
+      logger.info(`チャンク ${ci + 1}: 総ページ数 ${totalPages} ZIPダウンロード開始`);
+
+      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        if (pageNum > 1) {
+          await goToDeliveryPage(session.page);
+          await setDateRangeAndSearch(session.page, chunk.from, chunk.to);
+          await clickPageNumber(session.page, pageNum);
+        }
+
+        const selectedCount = await selectCurrentPageRows(session.page);
+        logger.info(`Kaken: チャンク${ci + 1} ページ${pageNum}/${totalPages}: ${selectedCount}行選択`);
+        if (selectedCount === 0) continue;
+
+        await session.page.waitForFunction(
+          () => {
+            const btn = document.querySelector('#BTNDOWNLODFILES') as HTMLElement | null;
+            if (!btn) return false;
+            const display = window.getComputedStyle(btn).display;
+            return display !== 'none' && display !== '';
+          },
+          { timeout: 10_000 }
+        ).catch(() => {});
+
+        // ZIP ダウンロード（最大5回リトライ）
+        let zipResult: Awaited<ReturnType<typeof downloadZipBuffer>> = null;
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          zipResult = await downloadZipBuffer(session.page);
+          if (zipResult) break;
+          logger.warn(`Kaken: チャンク${ci + 1} ページ${pageNum}: ZIPダウンロード失敗 (試行${attempt}/5)`);
+          if (attempt < 5) {
+            await session.page.waitForTimeout(attempt * 3000);
+          }
+        }
+        if (!zipResult) {
+          logger.error(`Kaken: チャンク${ci + 1} ページ${pageNum}: ZIPダウンロード最終失敗`);
+          // チャンク単位ではスキップせず続行（他のチャンクに影響させない）
+          continue;
+        }
+        const pdfs = extractPdfsFromZip(zipResult.buffer);
+        for (const pdf of pdfs) {
+          const baseName = pdf.name.split('/').pop() ?? pdf.name;
+          pdfMap.set(baseName, pdf.buffer);
+          pdfMap.set(pdf.name, pdf.buffer);
+        }
+        logger.info(`Kaken: チャンク${ci + 1} ページ${pageNum}: ZIP内PDF ${pdfs.length}件追加（累計 ${pdfMap.size / 2}件）`);
+      }
+
+      allNewRows.push(...newRows);
+    }
+
+    const newRows = allNewRows;
+    logger.info(`グリッド合計: ${result.fetched_count} 件, 新規: ${newRows.length} 件, PDF: ${pdfMap.size / 2} 件`);
 
     if (newRows.length === 0) {
       logger.info('新規取込対象なし');
@@ -498,80 +549,6 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
       return result;
     }
 
-    // ---- ページ別ZIP一括ダウンロード ----
-    // 【重要】readGridData はAJAXページ遷移を行うため、vSELECTED_* チェックボックスが
-    // DOM から消える場合がある。goToDeliveryPage() でフルリロードして復元する。
-    emit({ type: 'phase', phase: 'PDF取得中…' });
-    await goToDeliveryPage(session.page);
-    logger.info('Kaken: 納品書ページ再ロード完了（チェックボックス復元）');
-
-    // GeneXus は全ページ選択後のZIPダウンロードが失敗するため、
-    // ページごとに「選択→ダウンロード」を繰り返す方式に変更。
-    const pdfMap = new Map<string, Buffer>();
-    const totalPages = await getTotalPages(session.page);
-    logger.info(`Kaken: 総ページ数 ${totalPages} ページ別ZIPダウンロード開始`);
-    // ZIPダウンロードの進捗をtotal/itemで通知（フロントでパーセント表示）
-    emit({ type: 'total', total: totalPages, skipped: 0 });
-
-    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-      emit({ type: 'item', current: pageNum - 1, total: totalPages, slipNumber: `ZIP ${pageNum}/${totalPages}`, status: 'ok' });
-
-      // ページ2以降: AJAXページ遷移でチェックボックスが消えるため、
-      // 毎回フルリロードしてからページ遷移する
-      if (pageNum > 1) {
-        await goToDeliveryPage(session.page);
-        await clickPageNumber(session.page, pageNum);
-      }
-
-      const selectedCount = await selectCurrentPageRows(session.page);
-      logger.info(`Kaken: ページ${pageNum}/${totalPages}: ${selectedCount}行選択`);
-
-      if (selectedCount === 0) continue;
-
-      // ダウンロードボタン visible 待機
-      await session.page.waitForFunction(
-        () => {
-          const btn = document.querySelector('#BTNDOWNLODFILES') as HTMLElement | null;
-          if (!btn) return false;
-          const display = window.getComputedStyle(btn).display;
-          return display !== 'none' && display !== '';
-        },
-        { timeout: 10_000 }
-      ).catch(() => {});
-
-      // ZIP ダウンロード（最大5回リトライ、絶対にスキップしない）
-      let zipResult: Awaited<ReturnType<typeof downloadZipBuffer>> = null;
-      for (let attempt = 1; attempt <= 5; attempt++) {
-        zipResult = await downloadZipBuffer(session.page);
-        if (zipResult) break;
-        logger.warn(`Kaken: ページ${pageNum}: ZIPダウンロード失敗 (試行${attempt}/5)`);
-        if (attempt < 5) {
-          logger.info(`Kaken: ページ${pageNum}: ${attempt * 3}秒待機後リトライ...`);
-          await session.page.waitForTimeout(attempt * 3000);
-        }
-      }
-      if (!zipResult) {
-        const errMsg = `ページ${pageNum}のZIPダウンロードに5回失敗しました。データの欠損を防ぐため処理を中断します。再度実行してください。`;
-        logger.error(`Kaken: ${errMsg}`);
-        throw new Error(errMsg);
-      }
-      const pdfs = extractPdfsFromZip(zipResult.buffer);
-      for (const pdf of pdfs) {
-        const baseName = pdf.name.split('/').pop() ?? pdf.name;
-        pdfMap.set(baseName, pdf.buffer);
-        pdfMap.set(pdf.name, pdf.buffer);
-      }
-      logger.info(`Kaken: ページ${pageNum}: ZIP内PDF ${pdfs.length}件追加（累計 ${pdfMap.size / 2}件）`);
-    }
-
-    // ページ1に戻す
-    if (totalPages > 1) {
-      await clickPageNumber(session.page, 1);
-    }
-
-    logger.info(`Kaken: 全ページZIPダウンロード完了: 累計PDF ${pdfMap.size / 2}件`);
-
-    // PDF解析フェーズ開始：total イベントで件数を通知してパーセント表示
     emit({ type: 'total', total: newRows.length, skipped: result.skipped_count });
     // ---- 各行を処理 ----
     let processedCount = 0;
