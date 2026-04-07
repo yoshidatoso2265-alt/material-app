@@ -36,7 +36,7 @@ import { downloadZipBuffer, extractPdfsFromZip } from '../scraper/kaken/kakenDow
 // import { downloadPdfByPath } from '../scraper/kaken/kakenPdfFetcher'; // gxdownload は 404 のため未使用
 
 import { extractPdfTextFromBuffer } from './pdf/pdfExtractor';
-import { extractDeliverySlip } from '../../utils/geminiClient';
+import { extractDeliverySlip, extractDeliverySlipFromPdf } from '../../utils/geminiClient';
 
 import * as repo from './delivery-imports.repository';
 import {
@@ -151,32 +151,32 @@ export async function importPdfFile(opts: {
 
   logger.info(`PDF取込開始: ${originalName}`);
 
-  // ---- Step 1: PDF テキスト抽出 ----
+  // ---- Step 1: Gemini にPDFを直接送って解析（OCR不要） ----
+  const knownSiteNames = repo.getRecentSiteNames(30);
+  const geminiResult = await extractDeliverySlipFromPdf(buffer, knownSiteNames);
+
+  // フォールバック: PDF直接解析が失敗した場合はOCRテキスト版で再試行
+  if (geminiResult.confidence === 0 && geminiResult.materials.length === 0) {
+    logger.info(`PDF直接解析で抽出失敗、OCRテキスト版でリトライ: ${originalName}`);
+    const extractResult = await extractPdfTextFromBuffer(buffer);
+    if (extractResult.success) {
+      const retryResult = await extractDeliverySlip(extractResult.text, knownSiteNames);
+      if (retryResult.confidence > geminiResult.confidence) {
+        Object.assign(geminiResult, retryResult);
+      }
+    }
+  }
+
+  // PDFテキストも保存用に抽出（raw_text保存用）
   const extractResult = await extractPdfTextFromBuffer(buffer);
 
   let parseStatus: 'success' | 'partial' | 'failed' = 'success';
   let parseConfidence = 0;
 
-  if (!extractResult.success) {
-    parseStatus = 'failed';
-    warnings.push(extractResult.error ?? 'PDF解析に失敗しました');
-    logger.warn(`PDF テキスト抽出失敗: ${originalName} - ${extractResult.error}`);
-  }
-
-  // ---- Step 2: Gemini で現場名・資材名・金額を抽出 ----
-  const knownSiteNames = repo.getRecentSiteNames(30);
-  const geminiResult = extractResult.success
-    ? await extractDeliverySlip(extractResult.text, knownSiteNames)
-    : { site_name: null, delivery_date: null, orderer_name: null, person_name: null,
-        total_amount_ex_tax: null, total_tax: null, total_amount_in_tax: null,
-        materials: [], confidence: 0, warnings: [] };
-
   warnings.push(...geminiResult.warnings);
 
-  if (parseStatus !== 'failed') {
-    parseStatus = geminiResult.confidence >= 0.6 ? 'success' : 'partial';
-    parseConfidence = geminiResult.confidence;
-  }
+  parseStatus = geminiResult.confidence >= 0.6 ? 'success' : geminiResult.confidence > 0 ? 'partial' : 'failed';
+  parseConfidence = geminiResult.confidence;
 
   // parsed 互換オブジェクト（後続コードとの互換性維持）
   // 現場名が取れなかった場合はグリッドの届け先をフォールバックとして使用
