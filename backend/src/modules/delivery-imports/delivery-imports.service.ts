@@ -522,19 +522,29 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
         { timeout: 10_000 }
       ).catch(() => {});
 
-      // ZIP ダウンロード
-      const zipResult = await downloadZipBuffer(session.page);
-      if (zipResult) {
-        const pdfs = extractPdfsFromZip(zipResult.buffer);
-        for (const pdf of pdfs) {
-          const baseName = pdf.name.split('/').pop() ?? pdf.name;
-          pdfMap.set(baseName, pdf.buffer);
-          pdfMap.set(pdf.name, pdf.buffer);
+      // ZIP ダウンロード（最大5回リトライ、絶対にスキップしない）
+      let zipResult: Awaited<ReturnType<typeof downloadZipBuffer>> = null;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        zipResult = await downloadZipBuffer(session.page);
+        if (zipResult) break;
+        logger.warn(`Kaken: ページ${pageNum}: ZIPダウンロード失敗 (試行${attempt}/5)`);
+        if (attempt < 5) {
+          logger.info(`Kaken: ページ${pageNum}: ${attempt * 3}秒待機後リトライ...`);
+          await session.page.waitForTimeout(attempt * 3000);
         }
-        logger.info(`Kaken: ページ${pageNum}: ZIP内PDF ${pdfs.length}件追加（累計 ${pdfMap.size / 2}件）`);
-      } else {
-        logger.warn(`Kaken: ページ${pageNum}: ZIPダウンロード失敗`);
       }
+      if (!zipResult) {
+        const errMsg = `ページ${pageNum}のZIPダウンロードに5回失敗しました。データの欠損を防ぐため処理を中断します。再度実行してください。`;
+        logger.error(`Kaken: ${errMsg}`);
+        throw new Error(errMsg);
+      }
+      const pdfs = extractPdfsFromZip(zipResult.buffer);
+      for (const pdf of pdfs) {
+        const baseName = pdf.name.split('/').pop() ?? pdf.name;
+        pdfMap.set(baseName, pdf.buffer);
+        pdfMap.set(pdf.name, pdf.buffer);
+      }
+      logger.info(`Kaken: ページ${pageNum}: ZIP内PDF ${pdfs.length}件追加（累計 ${pdfMap.size / 2}件）`);
     }
 
     // ページ1に戻す

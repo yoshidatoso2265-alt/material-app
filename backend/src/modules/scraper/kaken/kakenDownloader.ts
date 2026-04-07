@@ -69,7 +69,7 @@ export async function downloadZipBuffer(page: Page): Promise<{ buffer: Buffer; f
 
   try {
     const [download] = await Promise.all([
-      page.waitForEvent('download', { timeout: 90_000 }),
+      page.waitForEvent('download', { timeout: 300_000 }),
       page.evaluate(() => {
         const el = document.querySelector('#BTNDOWNLODFILES') as HTMLElement | null;
         if (el) {
