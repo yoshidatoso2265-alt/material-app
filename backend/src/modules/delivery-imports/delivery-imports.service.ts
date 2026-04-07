@@ -35,6 +35,8 @@ import {
 import { downloadZipBuffer, extractPdfsFromZip } from '../scraper/kaken/kakenDownloader';
 // import { downloadPdfByPath } from '../scraper/kaken/kakenPdfFetcher'; // gxdownload は 404 のため未使用
 
+import fs from 'fs';
+import path from 'path';
 import { extractPdfTextFromBuffer } from './pdf/pdfExtractor';
 import { extractDeliverySlip, extractDeliverySlipFromPdf } from '../../utils/geminiClient';
 
@@ -272,8 +274,11 @@ export async function importPdfFile(opts: {
           parse_confidence: parseConfidence,
         });
 
-    // ---- Step 5: PDFファイルは保存しない（テキストデータのみ保存）----
-    // バッファはメモリ処理のみ。storage/pdf_raw/ への保存は行わない。
+    // ---- Step 5: PDFファイルを保存（再解析用） ----
+    const pdfDir = path.resolve(process.env.STORAGE_BASE_PATH ?? './storage', 'pdf_raw');
+    if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
+    const pdfSavePath = path.join(pdfDir, `${deliveryImport.id}_${originalName}`);
+    fs.writeFileSync(pdfSavePath, buffer);
 
     // ---- Step 6: 明細行保存（Gemini抽出の資材リスト） ----
     const lines: DeliveryImportLine[] = [];
@@ -796,17 +801,36 @@ function _createAliasIfNeeded(aliasName: string, siteId: number): void {
 // ============================================================
 
 /**
- * 保存済み raw_text から再解析する
- * パーサ改善後に再取込せずに再解析できる
+ * 保存済みPDF or raw_text から再解析する
+ * PDF直接Gemini解析を優先、PDFがなければOCRテキスト版にフォールバック
  */
 export async function reparseDeliveryImport(id: number): Promise<ImportPdfResult> {
   const di = repo.findDeliveryImportById(id);
   if (!di) throw new Error(`delivery_import ${id} が見つかりません`);
-  if (!di.raw_text) throw new Error('raw_text が保存されていないため再解析できません');
 
   const knownSiteNames = repo.getRecentSiteNames(30);
-  const geminiResult = await extractDeliverySlip(di.raw_text, knownSiteNames);
+
+  // PDF直接解析を試行
+  const pdfDir = path.resolve(process.env.STORAGE_BASE_PATH ?? './storage', 'pdf_raw');
+  const pdfFiles = fs.existsSync(pdfDir) ? fs.readdirSync(pdfDir).filter(f => f.startsWith(`${id}_`)) : [];
+  let geminiResult;
+  if (pdfFiles.length > 0) {
+    const pdfBuffer = fs.readFileSync(path.join(pdfDir, pdfFiles[0]));
+    geminiResult = await extractDeliverySlipFromPdf(pdfBuffer, knownSiteNames);
+    logger.info(`再解析(PDF直接): id=${id}`);
+  } else if (di.raw_text) {
+    geminiResult = await extractDeliverySlip(di.raw_text, knownSiteNames);
+    logger.info(`再解析(OCRテキスト): id=${id}`);
+  } else {
+    throw new Error('PDFファイルもraw_textも保存されていないため再解析できません');
+  }
   const parseStatus = geminiResult.confidence >= 0.6 ? 'success' : 'partial';
+
+  // 現場名変換
+  const COMPANY_DELIVERY_NAMES = /^(会社入れ|御社入れ|貴社入れ|記者入れ|株式会社吉田|彩り工房|彩り|いろどり)$/;
+  const resolvedSiteName = COMPANY_DELIVERY_NAMES.test(geminiResult.site_name ?? '')
+    ? '株式会社吉田'
+    : geminiResult.site_name;
 
   const db = getDb();
   const result = db.transaction(() => {
@@ -823,7 +847,7 @@ export async function reparseDeliveryImport(id: number): Promise<ImportPdfResult
            updated_at = ?
        WHERE id = ?`
     ).run(
-      geminiResult.site_name ?? null,
+      resolvedSiteName ?? null,
       geminiResult.person_name ?? null,
       geminiResult.delivery_date ?? null,
       geminiResult.total_amount_ex_tax ?? null,
