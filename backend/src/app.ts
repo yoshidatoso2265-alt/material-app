@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 
@@ -8,6 +9,9 @@ import { importsRouter } from './modules/imports/imports.router';
 import { sitesRouter } from './modules/sites/sites.router';
 import { materialsRouter } from './modules/materials/materials.router';
 import { dashboardRouter } from './modules/dashboard/dashboard.router';
+import { scraperRouter } from './modules/scraper/scraper.router';
+import { aggregationRouter } from './modules/aggregation/aggregation.router';
+import { deliveryImportsRouter } from './modules/delivery-imports/delivery-imports.router';
 
 export function createApp(): express.Application {
   const app = express();
@@ -67,6 +71,20 @@ export function createApp(): express.Application {
   app.use('/api/imports', importsRouter);
   app.use('/api/sites', sitesRouter);
   app.use('/api/materials', materialsRouter);
+  app.use('/api/scraper', scraperRouter);
+  app.use('/api/aggregation', aggregationRouter);
+  app.use('/api/delivery-imports', deliveryImportsRouter);
+
+  // ============================================================
+  // 本番: フロントエンド静的ファイル配信 + SPA フォールバック
+  // ============================================================
+  if (process.env.NODE_ENV === 'production') {
+    const frontendDist = path.resolve(__dirname, '../../frontend/dist');
+    app.use(express.static(frontendDist));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(frontendDist, 'index.html'));
+    });
+  }
 
   // ============================================================
   // 404 / エラーハンドラー（必ず最後に登録）

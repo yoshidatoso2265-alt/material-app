@@ -3,7 +3,7 @@ import axios from 'axios'
 export const apiClient = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
-  timeout: 30000,
+  timeout: 600000, // 10分（Kaken更新は数分かかる）
 })
 
 apiClient.interceptors.response.use(

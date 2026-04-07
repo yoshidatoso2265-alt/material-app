@@ -156,6 +156,70 @@ AliasReviewPage（/alias-review）で管理者が確認
 
 ---
 
+## PoC 制約事項
+
+- **グリッドフォールバック**: 化研マテリアルポータルは PDF 専用のため、CSVダウンロードではなくグリッド直読みにフォールバックします（`kaken_grid_` プレフィックスのファイル名）。
+- **20行制限**: グリッドは最大20行しか表示されないため、期間が長い場合は全件取得できません。
+- **暫定品名**: グリッドフォールバック時は品名が「現場名 (伝票番号)」形式で自動生成されます（`is_provisional_name = 1`）。
+- **クライアントサイド日付フィルタ**: サーバーサイドの日付フィルタが動作しないため、取得後にJavaScriptで再フィルタします。
+
+## 自動取得スケジュール
+
+`node-cron` を使って毎日 06:00 (Asia/Tokyo) に自動実行されます。
+
+`SCRAPER_CRON` 環境変数でスケジュールを変更できます：
+
+```
+# 毎日 08:00
+SCRAPER_CRON=0 8 * * *
+
+# 平日 07:30
+SCRAPER_CRON=30 7 * * 1-5
+```
+
+各実行は `scraper_runs` テーブルに記録され、`GET /api/scraper/history` で取得できます。
+
+## バックフィル API
+
+過去データを一括取込する場合：
+
+```bash
+# デフォルト（過去6ヶ月、7日単位）
+POST /api/scraper/backfill
+
+# カスタム期間
+POST /api/scraper/backfill
+Content-Type: application/json
+{
+  "dateFrom": "2025-09-01",
+  "dateTo": "2026-03-17",
+  "chunkDays": 7
+}
+```
+
+## データベーススキーマ概要
+
+### `material_imports`
+CSVインポートバッチ（1レコード = 1取込）。ステータス・行数・期間を管理。
+
+### `material_import_rows`
+インポートされたCSVの明細行。主要カラム：
+- `raw_site_name`: CSVの現場名
+- `normalized_site_name`: 現場名の正規化済み文字列（migration 007追加）
+- `is_provisional_name`: グリッドフォールバック時の自動生成品名フラグ（migration 007追加）
+- `is_duplicate`: 重複行フラグ
+- `has_error`: パースエラーフラグ
+- `source_row_hash`: 重複検出用 SHA-256 ハッシュ
+
+### `sites`
+現場マスター。`raw_site_name` の正規化一致で `material_import_rows` と紐づけ。
+
+### `scraper_runs`
+スクレイパー実行履歴。`run_type` は `auto` / `manual` / `backfill`。
+
+### `material_site_aliases`
+現場名の表記ゆれ候補（管理者承認待ち）。
+
 ## API 一覧
 
 ```
@@ -184,6 +248,16 @@ GET  /api/imports/:id
 GET  /api/imports/:id/rows
 GET  /api/imports/:id/errors
 DELETE /api/imports/:id
+
+POST /api/scraper/run
+POST /api/scraper/probe
+GET  /api/scraper/artifacts
+GET  /api/scraper/last-result
+GET  /api/scraper/history?limit=20
+POST /api/scraper/backfill
+
+GET  /api/aggregation/sites
+GET  /api/aggregation/sites/:siteName
 ```
 
 ---

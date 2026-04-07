@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3100:3000"
+    env_file:
+      - .env.production
+    volumes:
+      - ./backend/data:/app/backend/data
+      - ./backend/storage:/app/backend/storage

@@ -149,8 +149,9 @@ export class ImportsRepository {
             order_date, delivery_date, slip_number,
             material_name, spec, quantity, unit, unit_price, amount,
             supplier, row_index, source_row_hash,
-            is_duplicate, duplicate_of_id, has_error, error_message)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            is_duplicate, duplicate_of_id, has_error, error_message,
+            normalized_site_name, is_provisional_name)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          RETURNING *`
       )
       .get(
@@ -173,7 +174,9 @@ export class ImportsRepository {
         row.is_duplicate,
         row.duplicate_of_id ?? null,
         row.has_error,
-        row.error_message ?? null
+        row.error_message ?? null,
+        row.normalized_site_name ?? null,
+        row.is_provisional_name ?? 0
       ) as DbImportRow;
     return result;
   }

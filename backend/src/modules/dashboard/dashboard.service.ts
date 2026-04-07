@@ -74,10 +74,14 @@ class DashboardService {
            COALESCE(SUM(r.amount), 0) as total_amount,
            COUNT(*) as row_count
          FROM material_import_rows r
-         ${baseCondition}
-         ${dateCondition}
-           AND r.site_id IS NOT NULL
          LEFT JOIN sites s ON s.id = r.site_id
+         JOIN material_imports mi ON mi.id = r.import_id
+         WHERE mi.deleted_at IS NULL
+           AND r.is_duplicate = 0
+           AND r.has_error = 0
+           AND r.amount IS NOT NULL
+           AND r.site_id IS NOT NULL
+         ${dateCondition}
          GROUP BY r.site_id, s.name
          ORDER BY total_amount DESC
          LIMIT 5`

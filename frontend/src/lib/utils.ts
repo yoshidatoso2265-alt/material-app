@@ -27,6 +27,39 @@ export function formatDateTime(dateStr: string | null | undefined): string {
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
+/** 半角カタカナを全角カタカナに変換 */
+export function hankakuToZenkaku(str: string | null | undefined): string {
+  if (!str) return str ?? ''
+  const HANKAKU = 'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ'
+  const ZENKAKU = 'ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン゛゜'
+  let result = ''
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i]
+    const idx = HANKAKU.indexOf(ch)
+    if (idx >= 0) {
+      // 濁点・半濁点の結合
+      const next = str[i + 1]
+      if (next === 'ﾞ') {
+        const dakuten: Record<string, string> = {
+          'カ':'ガ','キ':'ギ','ク':'グ','ケ':'ゲ','コ':'ゴ','サ':'ザ','シ':'ジ','ス':'ズ','セ':'ゼ','ソ':'ゾ',
+          'タ':'ダ','チ':'ヂ','ツ':'ヅ','テ':'デ','ト':'ド','ハ':'バ','ヒ':'ビ','フ':'ブ','ヘ':'ベ','ホ':'ボ','ウ':'ヴ',
+        }
+        const base = ZENKAKU[idx]
+        if (dakuten[base]) { result += dakuten[base]; i++; continue }
+      }
+      if (next === 'ﾟ') {
+        const handakuten: Record<string, string> = { 'ハ':'パ','ヒ':'ピ','フ':'プ','ヘ':'ペ','ホ':'ポ' }
+        const base = ZENKAKU[idx]
+        if (handakuten[base]) { result += handakuten[base]; i++; continue }
+      }
+      result += ZENKAKU[idx]
+    } else {
+      result += ch
+    }
+  }
+  return result
+}
+
 /** 当月の開始・終了日を返す */
 export function currentMonthRange(): { from: string; to: string } {
   const now = new Date()

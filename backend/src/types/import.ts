@@ -42,6 +42,8 @@ export interface MaterialImportRow {
   duplicate_of_id: number | null;
   has_error: number;    // 0=正常, 1=エラー
   error_message: string | null;
+  normalized_site_name?: string | null;
+  is_provisional_name?: number;
   created_at: string;
 }
 

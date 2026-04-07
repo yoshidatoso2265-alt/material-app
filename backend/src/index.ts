@@ -12,6 +12,7 @@ import { runMigrations } from './db/migrate';
 import { createApp } from './app';
 import { logger } from './utils/logger';
 import { closeDb } from './db/client';
+import { startScheduler } from './scheduler';
 import fs from 'fs';
 import path from 'path';
 
@@ -22,6 +23,9 @@ function ensureStorageDirs(): void {
   const dirs = [
     path.join(base, 'csv_raw'),
     path.join(base, 'csv_normalized'),
+    path.join(base, 'screenshots'),
+    path.join(base, 'pdf_raw'),
+    path.join(base, 'pdf_inbox'),  // 手動配置PDF の取込受け箱
   ];
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) {
@@ -39,6 +43,9 @@ async function main(): Promise<void> {
   logger.info('Running database migrations...');
   runMigrations();
 
+  // スケジューラー起動
+  startScheduler();
+
   // Expressアプリ作成・起動
   const app = createApp();
 
@@ -47,6 +54,10 @@ async function main(): Promise<void> {
     logger.info(`Health check: http://localhost:${PORT}/health`);
     logger.info(`Environment: ${process.env.NODE_ENV ?? 'development'}`);
   });
+
+  // Playwright スクレイピングは長時間かかるためタイムアウトを延長（20分）
+  server.timeout = 20 * 60 * 1000;
+  server.keepAliveTimeout = 20 * 60 * 1000;
 
   // グレースフルシャットダウン
   const shutdown = (signal: string) => {

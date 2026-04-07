@@ -1,20 +1,16 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard,
-  Package,
-  MapPin,
-  Upload,
-  GitMerge,
+  RefreshCw,
   X,
+  BarChart2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
-  { to: '/',         icon: LayoutDashboard, label: 'ダッシュボード', end: true },
-  { to: '/materials',icon: Package,         label: '材料一覧' },
-  { to: '/sites',    icon: MapPin,          label: '現場一覧' },
-  { to: '/imports',  icon: Upload,          label: 'CSV取込' },
-  { to: '/alias-review', icon: GitMerge,   label: '表記ゆれ確認' },
+  { to: '/',             icon: LayoutDashboard, label: 'ダッシュボード', end: true },
+  { to: '/scraper',      icon: RefreshCw,       label: '自動取得' },
+  { to: '/delivery-agg', icon: BarChart2,       label: '材料費集計' },
 ]
 
 interface SidebarProps {
