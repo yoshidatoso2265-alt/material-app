@@ -120,7 +120,8 @@ export default function DeliveryImportsPage() {
           es.close()
           loadList()
         } else if (msg.type === 'error') {
-          setError(msg.message)
+          const raw = msg.message || '不明なエラー'
+          setError(raw.length > 100 ? raw.slice(0, 100) + '…' : raw)
           setProgress({ stage: 'idle' })
           setUpdating(false)
           es.close()
