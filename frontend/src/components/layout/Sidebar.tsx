@@ -1,7 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
   Download,
-  RefreshCw,
   X,
   BarChart2,
 } from 'lucide-react'
@@ -10,7 +9,6 @@ import { cn } from '@/lib/utils'
 const navItems = [
   { to: '/delivery-imports', icon: Download,   label: '取込' },
   { to: '/delivery-agg',    icon: BarChart2,   label: '材料費集計' },
-  { to: '/scraper',         icon: RefreshCw,   label: '自動取得' },
 ]
 
 interface SidebarProps {
