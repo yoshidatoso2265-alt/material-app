@@ -44,7 +44,7 @@ export const sitesApi = {
   update: (id: number, body: Partial<Site>) =>
     apiClient.put<{ data: Site }>(`/sites/${id}`, body).then((r) => r.data.data),
 
-  getMaterials: (id: number, params?: { date_from?: string; date_to?: string; page?: number }) =>
+  getMaterials: (id: number, params?: { date_from?: string; date_to?: string; page?: number; limit?: number }) =>
     apiClient.get<{ data: Paginated<Record<string, unknown>> }>(`/sites/${id}/materials`, { params }).then((r) => r.data.data),
 
   getSummary: (id: number, params?: { date_from?: string; date_to?: string }) =>

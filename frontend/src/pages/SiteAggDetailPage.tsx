@@ -74,7 +74,7 @@ export default function SiteAggDetailPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="#94a3b8" />
               <YAxis tickFormatter={(v) => `¥${(v/10000).toFixed(0)}万`} tick={{ fontSize: 11 }} stroke="#94a3b8" width={70} />
-              <Tooltip formatter={(v: number) => [formatCurrency(v), '材料費']} labelStyle={{ fontWeight: 'bold' }} />
+              <Tooltip formatter={(v: unknown) => [formatCurrency(Number(v)), '材料費']} labelStyle={{ fontWeight: 'bold' }} />
               <Bar dataKey="amount" fill="#7c3aed" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>

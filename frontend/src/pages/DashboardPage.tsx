@@ -131,7 +131,7 @@ export default function DashboardPage() {
                     tickFormatter={(v: string) => v.length > 6 ? v.slice(0, 6) + '…' : v}
                   />
                   <Tooltip
-                    formatter={(v: number) => [formatCurrency(v), '材料費']}
+                    formatter={(v: unknown) => [formatCurrency(Number(v)), '材料費']}
                     contentStyle={{ fontSize: 12, borderRadius: 8, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                   />
                   <Bar dataKey="total_amount" radius={[0, 6, 6, 0]}>

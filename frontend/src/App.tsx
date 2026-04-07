@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
-import DashboardPage from '@/pages/DashboardPage'
+// DashboardPage は現在未使用（取込ページにリダイレクト）
 import MaterialsPage from '@/pages/MaterialsPage'
 import SitesPage from '@/pages/SitesPage'
 import SiteDetailPage from '@/pages/SiteDetailPage'

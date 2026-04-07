@@ -48,7 +48,7 @@ export function Sidebar({ onClose }: SidebarProps) {
           <NavLink
             key={item.to}
             to={item.to}
-            end={item.end}
+            end
             onClick={onClose}
             className={({ isActive }) =>
               cn(

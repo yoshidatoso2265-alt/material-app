@@ -32,7 +32,7 @@ function ProgressBar({ progress }: { progress: ProgressState }) {
         </p>
         {pct !== null && (
           <p className="text-white/70 text-sm font-bold">
-            {progress.current} / {progress.total}
+            {'current' in progress ? progress.current : ''} / {'total' in progress ? progress.total : ''}
           </p>
         )}
       </div>
