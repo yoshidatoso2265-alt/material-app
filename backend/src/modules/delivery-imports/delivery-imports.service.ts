@@ -184,10 +184,10 @@ export async function importPdfFile(opts: {
   if (!geminiResult.site_name && opts.fallbackSiteName) {
     logger.info(`現場名フォールバック: Gemini未取得 → 届け先 "${opts.fallbackSiteName}" を使用`);
   }
-  // 会社直納（会社入れ/御社入れ/貴社入れ等）は「彩り」に統一
-  const COMPANY_DELIVERY_NAMES = /^(会社入れ|御社入れ|貴社入れ|株式会社吉田|彩り工房)$/;
+  // 会社直納（会社入れ/御社入れ/貴社入れ/彩り等）は「株式会社吉田」に統一
+  const COMPANY_DELIVERY_NAMES = /^(会社入れ|御社入れ|貴社入れ|記者入れ|株式会社吉田|彩り工房|彩り|いろどり)$/;
   const resolvedSiteName = COMPANY_DELIVERY_NAMES.test(rawResolvedSiteName ?? '')
-    ? '彩り'
+    ? '株式会社吉田'
     : rawResolvedSiteName;
   const parsed = {
     raw_site_name: resolvedSiteName,
