@@ -1,6 +1,9 @@
 /**
  * Gemini API クライアント
- * 納品書PDFテキストから構造化データを抽出する
+ *
+ * 役割分担:
+ *   - normalizeSiteNames(): グリッドの現場名リストを一括正規化（表記ゆれ統一）
+ *   - extractMaterialsFromPdf(): PDFから資材明細・金額のみ抽出（現場名・担当者は取らない）
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -14,10 +17,6 @@ const RETRY_DELAY_MS = 5000;
 
 async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-/**
- * Gemini API呼び出しをリトライ付きで実行
- * 503エラーの場合はフォールバックモデルも試す
- */
 async function callGeminiWithRetry(
   contents: Parameters<ReturnType<typeof genai.getGenerativeModel>['generateContent']>[0],
 ): Promise<string> {
@@ -39,9 +38,9 @@ async function callGeminiWithRetry(
         }
         if (is503 || is429) {
           logger.warn(`Gemini ${modelName} 全リトライ失敗、次のモデルへ`);
-          break; // try next model
+          break;
         }
-        throw err; // non-retryable error
+        throw err;
       }
     }
   }
@@ -61,55 +60,126 @@ export interface GeminiMaterial {
   amount: number | null;
 }
 
-export interface GeminiDeliverySlip {
-  site_name: string | null;
-  delivery_date: string | null;     // YYYY-MM-DD
-  orderer_name: string | null;
-  person_name: string | null;
+export interface GeminiPdfResult {
+  delivery_date: string | null;
   total_amount_ex_tax: number | null;
   total_tax: number | null;
   total_amount_in_tax: number | null;
   materials: GeminiMaterial[];
-  confidence: number;               // 0.0〜1.0
+  confidence: number;
   warnings: string[];
 }
 
+// 後方互換用（既存コードが参照している場合）
+export interface GeminiDeliverySlip extends GeminiPdfResult {
+  site_name: string | null;
+  orderer_name: string | null;
+  person_name: string | null;
+}
+
 // ============================================================
-// メイン関数
+// 1. グリッド現場名の一括正規化
 // ============================================================
 
 /**
- * PDFテキストから納品書情報を抽出する（テキスト版・フォールバック用）
+ * グリッドの現場名リストをGeminiで一括正規化する
+ * - 表記ゆれ統一（国立第七小学校/国立7小 → 統一名）
+ * - 会社宛て変換（御社入れ/会社入れ/貴社入れ/彩り → 株式会社吉田）
+ * @returns 入力名→正規化名のマッピング
  */
-export async function extractDeliverySlip(pdfText: string, knownSiteNames?: string[]): Promise<GeminiDeliverySlip> {
-  if (!process.env.GEMINI_API_KEY) {
-    logger.warn('GEMINI_API_KEY が未設定のためGemini抽出をスキップします');
-    return emptyResult(['GEMINI_API_KEY が未設定です']);
-  }
+export async function normalizeSiteNames(siteNames: string[]): Promise<Record<string, string>> {
+  if (!process.env.GEMINI_API_KEY || siteNames.length === 0) return {};
 
-  const prompt = buildPrompt(pdfText, knownSiteNames);
+  const uniqueNames = [...new Set(siteNames.filter(n => n.trim()))];
+  if (uniqueNames.length === 0) return {};
+
+  const prompt = `あなたは塗装会社の現場名を正規化するシステムです。
+以下の現場名リストを正規化してください。
+
+【ルール】
+1. 同じ現場を指す表記ゆれを統一する（例: 「国立第七小学校」「国立7小」「国立七小」→ 一番正式な名称に統一）
+2. 以下のキーワードは「株式会社吉田」に変換する:
+   - 「彩り」「いろどり」「彩り工房」
+   - 「御社入れ」「貴社入れ」「会社入れ」「記者入れ」
+   - 「株式会社吉田」はそのまま
+3. 上記以外の現場名はそのまま返す（勝手に変換しない）
+4. 空文字やnullは除外
+
+必ず以下のJSON形式のみで返してください（説明文不要）:
+{
+  "元の名前1": "正規化後の名前1",
+  "元の名前2": "正規化後の名前2"
+}
+
+--- 現場名リスト ---
+${uniqueNames.map(n => `- ${n}`).join('\n')}`;
 
   try {
     const text = await callGeminiWithRetry(prompt);
-    return parseGeminiResponse(text);
+    const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) ??
+                      text.match(/```\s*([\s\S]*?)\s*```/) ??
+                      text.match(/(\{[\s\S]*\})/);
+    const jsonStr = jsonMatch ? jsonMatch[1] : text.trim();
+    const mapping = JSON.parse(jsonStr) as Record<string, string>;
+    logger.info(`現場名正規化: ${uniqueNames.length}件 → ${Object.keys(mapping).length}件マッピング`);
+    return mapping;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.error(`Gemini API エラー: ${msg}`);
-    return emptyResult([`Gemini API エラー: ${msg}`]);
+    logger.error(`現場名正規化エラー: ${msg}`);
+    return {};
   }
 }
 
+// ============================================================
+// 2. PDF資材明細の抽出（現場名・担当者は取らない）
+// ============================================================
+
 /**
- * PDFバイナリを直接Geminiに投げて納品書情報を抽出する（画像認識版・推奨）
- * OCRを通さずGeminiが直接PDFを読むので精度が高い
+ * PDFバイナリを直接Geminiに投げて資材明細・金額を抽出する
+ * 現場名・担当者はグリッドから取得するのでここでは抽出しない
  */
-export async function extractDeliverySlipFromPdf(pdfBuffer: Buffer, knownSiteNames?: string[]): Promise<GeminiDeliverySlip> {
+export async function extractMaterialsFromPdf(pdfBuffer: Buffer): Promise<GeminiPdfResult> {
   if (!process.env.GEMINI_API_KEY) {
     logger.warn('GEMINI_API_KEY が未設定のためGemini抽出をスキップします');
-    return emptyResult(['GEMINI_API_KEY が未設定です']);
+    return emptyPdfResult(['GEMINI_API_KEY が未設定です']);
   }
 
-  const prompt = buildPromptForPdf(knownSiteNames);
+  const prompt = `あなたは塗装会社の材料費管理システムです。
+添付の化研マテリアル（塗料・建材の専門商社）の納品書PDFを読み取って、資材明細と金額を抽出してください。
+必ず以下のJSON形式のみで返してください（説明文・コードブロック不要）。
+
+{
+  "delivery_date": "YYYY-MM-DD形式（見つからない場合はnull）",
+  "total_amount_ex_tax": 税抜合計金額（数値、見つからない場合はnull）,
+  "total_tax": 消費税額（数値、見つからない場合はnull）,
+  "total_amount_in_tax": 税込合計金額（数値、見つからない場合はnull）,
+  "materials": [
+    {
+      "name": "資材名",
+      "spec": "規格・品番（なければnull）",
+      "quantity": 数量（数値、なければnull）,
+      "unit": "単位（缶/本/枚/kg等、なければnull）",
+      "unit_price": 単価（数値、なければnull）,
+      "amount": 金額（数値、なければnull）
+    }
+  ],
+  "confidence": 抽出の信頼度（0.0〜1.0）,
+  "warnings": ["注意事項があれば記載"]
+}
+
+【materialsの抽出（最重要：PDFの表を正確に読むこと）】
+PDFに記載されている商品テーブルの全行を1つ残らず抽出すること。
+品名・規格・数量・単位・単価・金額 の各列を正確に読み取ること。
+半角カタカナは全角に変換。規格・色番号・容量はspecに分離。
+
+含めるもの: 塗料、副材、運賃、配送料、値引き
+含めないもの: 帳票見出し、会社名、住所、伝票番号
+
+【その他】
+- 金額は数値のみ（カンマ・円マーク不要）
+- 日付はYYYY-MM-DD形式
+- 令和xx年 → 西暦に変換（令和1年=2019年）
+- materialsが空の場合は空配列 [] を返すこと`;
 
   try {
     const text = await callGeminiWithRetry([
@@ -121,189 +191,41 @@ export async function extractDeliverySlipFromPdf(pdfBuffer: Buffer, knownSiteNam
         },
       },
     ]);
-    return parseGeminiResponse(text);
+    return parsePdfResponse(text);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.error(`Gemini PDF直接解析エラー: ${msg}`);
-    return emptyResult([`Gemini PDF直接解析エラー: ${msg}`]);
+    logger.error(`Gemini PDF解析エラー: ${msg}`);
+    return emptyPdfResult([`Gemini PDF解析エラー: ${msg}`]);
   }
 }
 
 // ============================================================
-// プロンプト生成
+// 後方互換: 既存コードが使っている関数（非推奨）
 // ============================================================
 
-function buildPrompt(pdfText: string, knownSiteNames?: string[]): string {
-  const siteHint = knownSiteNames && knownSiteNames.length > 0
-    ? `\n【過去1ヶ月以内の既存現場名リスト（届け先マッチング用）】\n${knownSiteNames.map(s => `- ${s}`).join('\n')}\nお届け先がこのリストの現場名と同一または非常に似ている場合は、リスト内の現場名をそのまま site_name に使うこと。\n`
-    : '';
-  return `あなたは塗装会社の材料費管理システムです。
-以下は化研マテリアル（塗料・建材の専門商社）の納品書PDFから抽出したテキストです。
-このテキストから情報を抽出して、必ず以下のJSON形式のみで返してください（説明文・コードブロック不要）。
-
-{
-  "site_name": "現場名（見つからない場合はnull）",
-  "delivery_date": "YYYY-MM-DD形式（見つからない場合はnull）",
-  "orderer_name": "発注者名（見つからない場合はnull）",
-  "person_name": "担当者名（見つからない場合はnull）",
-  "total_amount_ex_tax": 税抜合計金額（数値、見つからない場合はnull）,
-  "total_tax": 消費税額（数値、見つからない場合はnull）,
-  "total_amount_in_tax": 税込合計金額（数値、見つからない場合はnull）,
-  "materials": [
-    {
-      "name": "資材名",
-      "spec": "規格・品番（なければnull）",
-      "quantity": 数量（数値、なければnull）,
-      "unit": "単位（缶/本/枚/kg等、なければnull）",
-      "unit_price": 単価（数値、なければnull）,
-      "amount": 金額（数値、なければnull）
-    }
-  ],
-  "confidence": 抽出の信頼度（0.0〜1.0）,
-  "warnings": ["抽出できなかった項目や注意事項があれば記載"]
+export async function extractDeliverySlip(_pdfText: string, _knownSiteNames?: string[]): Promise<GeminiDeliverySlip> {
+  return { ...emptyPdfResult(['extractDeliverySlip は廃止されました']), site_name: null, orderer_name: null, person_name: null };
 }
 
-【現場名の見つけ方（重要）】
-化研マテリアル納品書には次のパターンで現場名が記載されています：
-1. 「貴社入れ」「御社入れ」「会社入れ」「彩り」の直後の行に「現場名 金額 消費税 合計」の形式で記載される
-   例: 「貴社入れ\nレジデンス２８ 6,850 685 7,535」→ site_name = "レジデンス２８"
-   ※末尾の数値（金額）は現場名ではないので除外すること
-2. 「現場名:」「工事名:」「物件名:」などのラベルの後
-3. グリッドの「現場名」列（siteName）
-4. 上記1〜3で現場名が見つからない場合は「お届け先」「納品先」「配送先」に記載された宛先をそのまま現場名として使用すること
-   例: 「お届け先: 吉田塗装 国立学園マンション」→ site_name = "国立学園マンション"（会社名を除いた建物・物件名）
-   建物名がなく会社名や個人名だけの場合はその名前をそのまま site_name にすること
-- 現場名は建物名・マンション名・工事名（例：○○マンション、△△様邸、□□改修工事）
-- 発注者名（吉田様など個人名）・担当者名・会社名・住所と混同しないこと
-- パターン1〜4を全て試してどうしても特定できない場合のみnullにすること
-
-【現場名の特殊変換ルール（必須）】
-以下のキーワードが現場名として抽出された場合は「株式会社吉田」に変換すること：
-- 「彩り」「いろどり」→ site_name = "株式会社吉田"
-- 「御社入れ」「貴社入れ」「会社入れ」「記者入れ」→ site_name = "株式会社吉田"
-- これらは自社（株式会社吉田）宛ての納品なので現場名ではなく会社名に変換する
-
-【materialsの品名正規化ルール（重要）】
-- PDFのOCRで文字間にスペースが入ることがある。自然な商品名に修正すること
-  例: 「運 賃」→「運賃」、「小 口 割 増 運 賃」→「小口割増運賃」
-- 半角カタカナは必ず全角カタカナに変換すること（例: ｴｽｹｰﾌﾟﾚﾐｱﾑNADｼﾘｺﾝ → エスケープレミアムNADシリコン）
-- 規格・色番号・容量（例: 淡彩 17-70H 4KG）はspecに分離すること
-
-【materialsの抽出方法（重要：必ず全件抽出すること）】
-化研マテリアルの納品書PDFには以下の形式で商品が並んでいる：
-  品名 | 規格 | 数量 | 単位 | 単価 | 金額
-すべての行を1つ残らずmaterialsに含めること。1件も漏らさないこと。
-OCRテキストが崩れていても、数量・単価・金額のある行は必ず資材として抽出すること。
-
-【materialsに含めるもの】
-- 塗料（シリコン・ウレタン・フッ素・無機・弾性・下塗り材・プライマー等）
-- 副材（シーリング材・マスキングテープ・養生シート・ローラー・刷毛等）
-- 運賃・配送料・割増料金（nameに「運賃」「小口割増運賃」等と正規化して記載）
-- 値引き・割引（nameに「値引き」と記載、amountはマイナス値で記載）
-
-【materialsに含めないもの】
-- 「御社」「貴社」「以下の通り」「納品書」「合計」「税」等の帳票の見出し・ラベル
-- 会社名・住所・電話番号・担当者名
-- 「納品書No.」「伝票番号」等の番号項目
-- 数量も単価も金額も全てnullになるような文字列は除外
-
-【その他の注意事項】
-- 担当者名は「株式会社吉田 首都１部１Ｔ 手代木寛之」形式の場合、末尾の人名（手代木寛之）
-- 金額は数値のみ（カンマ・円マーク不要）
-- 日付は必ずYYYY-MM-DD形式に変換
-- 令和xx年 → 西暦に変換（令和1年=2019年）
-- materialsが空の場合は空配列 [] を返すこと
-- 全項目が正確に取れた場合 confidence=0.9以上、一部不明な場合 0.6〜0.8、大部分不明な場合 0.3以下
-
-${siteHint}
---- 以下 PDFテキスト ---
-${pdfText.slice(0, 15000)}`;
-}
-
-function buildPromptForPdf(knownSiteNames?: string[]): string {
-  const siteHint = knownSiteNames && knownSiteNames.length > 0
-    ? `\n【過去1ヶ月以内の既存現場名リスト（届け先マッチング用）】\n${knownSiteNames.map(s => `- ${s}`).join('\n')}\nお届け先がこのリストの現場名と同一または非常に似ている場合は、リスト内の現場名をそのまま site_name に使うこと。\n`
-    : '';
-  return `あなたは塗装会社の材料費管理システムです。
-添付の化研マテリアル（塗料・建材の専門商社）の納品書PDFを直接読み取って、情報を抽出してください。
-必ず以下のJSON形式のみで返してください（説明文・コードブロック不要）。
-
-{
-  "site_name": "現場名（見つからない場合はnull）",
-  "delivery_date": "YYYY-MM-DD形式（見つからない場合はnull）",
-  "orderer_name": "発注者名（見つからない場合はnull）",
-  "person_name": "担当者名（見つからない場合はnull）",
-  "total_amount_ex_tax": 税抜合計金額（数値、見つからない場合はnull）,
-  "total_tax": 消費税額（数値、見つからない場合はnull）,
-  "total_amount_in_tax": 税込合計金額（数値、見つからない場合はnull）,
-  "materials": [
-    {
-      "name": "資材名",
-      "spec": "規格・品番（なければnull）",
-      "quantity": 数量（数値、なければnull）,
-      "unit": "単位（缶/本/枚/kg等、なければnull）",
-      "unit_price": 単価（数値、なければnull）,
-      "amount": 金額（数値、なければnull）
-    }
-  ],
-  "confidence": 抽出の信頼度（0.0〜1.0）,
-  "warnings": ["抽出できなかった項目や注意事項があれば記載"]
-}
-
-【現場名の見つけ方（重要）】
-化研マテリアル納品書には次のパターンで現場名が記載されています：
-1. 「貴社入れ」「御社入れ」「会社入れ」「彩り」の直後の行に「現場名 金額 消費税 合計」の形式で記載される
-   例: 「貴社入れ\nレジデンス２８ 6,850 685 7,535」→ site_name = "レジデンス２８"
-   ※末尾の数値（金額）は現場名ではないので除外すること
-2. 「現場名:」「工事名:」「物件名:」などのラベルの後
-3. 上記1〜2で現場名が見つからない場合は「お届け先」「納品先」「配送先」に記載された宛先をそのまま現場名として使用
-- 現場名は建物名・マンション名・工事名（例：○○マンション、△△様邸、□□改修工事）
-- パターン1〜3を全て試してどうしても特定できない場合のみnullにすること
-
-【現場名の特殊変換ルール（必須）】
-以下のキーワードが現場名として抽出された場合は「株式会社吉田」に変換すること：
-- 「彩り」「いろどり」→ site_name = "株式会社吉田"
-- 「御社入れ」「貴社入れ」「会社入れ」「記者入れ」→ site_name = "株式会社吉田"
-- これらは自社（株式会社吉田）宛ての納品なので現場名ではなく会社名に変換する
-
-【materialsの抽出（最重要：PDFの表を正確に読むこと）】
-PDFに記載されている商品テーブルの全行を1つ残らず抽出すること。
-品名・規格・数量・単位・単価・金額 の各列を正確に読み取ること。
-半角カタカナは全角に変換。規格・色番号・容量はspecに分離。
-
-含めるもの: 塗料、副材、運賃、配送料、値引き
-含めないもの: 帳票見出し、会社名、住所、伝票番号
-
-【その他の注意事項】
-- 担当者名は「株式会社吉田 首都１部１Ｔ 手代木寛之」形式の場合、末尾の人名（手代木寛之）
-- 金額は数値のみ（カンマ・円マーク不要）
-- 日付は必ずYYYY-MM-DD形式に変換
-- 令和xx年 → 西暦に変換（令和1年=2019年）
-- materialsが空の場合は空配列 [] を返すこと
-- 全項目が正確に取れた場合 confidence=0.9以上
-
-${siteHint}`;
+export async function extractDeliverySlipFromPdf(pdfBuffer: Buffer, _knownSiteNames?: string[]): Promise<GeminiDeliverySlip> {
+  const result = await extractMaterialsFromPdf(pdfBuffer);
+  return { ...result, site_name: null, orderer_name: null, person_name: null };
 }
 
 // ============================================================
 // レスポンス解析
 // ============================================================
 
-function parseGeminiResponse(text: string): GeminiDeliverySlip {
-  // JSONブロックを抽出（```json ... ``` に囲まれている場合に対応）
+function parsePdfResponse(text: string): GeminiPdfResult {
   const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) ??
                     text.match(/```\s*([\s\S]*?)\s*```/) ??
                     text.match(/(\{[\s\S]*\})/);
-
   const jsonStr = jsonMatch ? jsonMatch[1] : text.trim();
 
   try {
     const raw = JSON.parse(jsonStr);
     return {
-      site_name: raw.site_name ?? null,
       delivery_date: normalizeDate(raw.delivery_date),
-      orderer_name: raw.orderer_name ?? null,
-      person_name: raw.person_name ?? null,
       total_amount_ex_tax: toNumber(raw.total_amount_ex_tax),
       total_tax: toNumber(raw.total_tax),
       total_amount_in_tax: toNumber(raw.total_amount_in_tax),
@@ -313,7 +235,7 @@ function parseGeminiResponse(text: string): GeminiDeliverySlip {
     };
   } catch (err) {
     logger.error(`Geminiレスポンスのパース失敗: ${text.slice(0, 200)}`);
-    return emptyResult(['GeminiレスポンスのJSONパースに失敗しました']);
+    return emptyPdfResult(['GeminiレスポンスのJSONパースに失敗しました']);
   }
 }
 
@@ -335,9 +257,7 @@ function parseMaterials(raw: unknown): GeminiMaterial[] {
 function normalizeDate(val: unknown): string | null {
   if (!val) return null;
   const s = String(val).trim();
-  // すでにYYYY-MM-DD形式
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  // YYYY/MM/DD → YYYY-MM-DD
   const slash = s.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
   if (slash) return `${slash[1]}-${slash[2]}-${slash[3]}`;
   return null;
@@ -349,12 +269,9 @@ function toNumber(val: unknown): number | null {
   return isNaN(n) ? null : n;
 }
 
-function emptyResult(warnings: string[]): GeminiDeliverySlip {
+function emptyPdfResult(warnings: string[]): GeminiPdfResult {
   return {
-    site_name: null,
     delivery_date: null,
-    orderer_name: null,
-    person_name: null,
     total_amount_ex_tax: null,
     total_tax: null,
     total_amount_in_tax: null,

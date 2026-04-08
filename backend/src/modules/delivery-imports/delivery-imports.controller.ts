@@ -87,6 +87,8 @@ export async function uploadPdf(req: Request, res: Response): Promise<void> {
     buffer: file.buffer,
     originalName: file.originalname,
     importedBy: (req.headers['x-user-id'] as string) ?? undefined,
+    siteName: null,
+    personName: null,
   });
 
   const statusCode = result.deliveryImport.parse_status === 'failed' ? 422 : 201;

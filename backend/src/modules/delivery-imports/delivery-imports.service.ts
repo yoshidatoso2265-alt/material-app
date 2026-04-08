@@ -37,8 +37,7 @@ import { downloadZipBuffer, extractPdfsFromZip } from '../scraper/kaken/kakenDow
 
 import fs from 'fs';
 import path from 'path';
-import { extractPdfTextFromBuffer } from './pdf/pdfExtractor';
-import { extractDeliverySlip, extractDeliverySlipFromPdf } from '../../utils/geminiClient';
+import { extractMaterialsFromPdf, normalizeSiteNames } from '../../utils/geminiClient';
 
 import * as repo from './delivery-imports.repository';
 import {
@@ -140,37 +139,23 @@ export function matchSiteForDeliveryImport(rawSiteName: string): SiteMatchResult
 
 /**
  * PDF ファイルを取り込む（メインエントリーポイント）
+ * 現場名・担当者はグリッドから取得するのでopts経由で渡す
  */
 export async function importPdfFile(opts: {
   buffer: Buffer;
   originalName: string;
   importedBy?: string;
-  sourceUniqueKey?: string;  // 事前に計算済みのSHA-256（省略時は内部で計算）
-  fallbackSiteName?: string; // Geminiが現場名を取れなかった場合の届け先フォールバック
+  sourceUniqueKey?: string;
+  siteName: string | null;    // グリッドから取得した正規化済み現場名
+  personName: string | null;  // グリッドから取得した担当者名
 }): Promise<ImportPdfResult> {
   const { buffer, originalName } = opts;
   const warnings: string[] = [];
 
   logger.info(`PDF取込開始: ${originalName}`);
 
-  // ---- Step 1: Gemini にPDFを直接送って解析（OCR不要） ----
-  const knownSiteNames = repo.getRecentSiteNames(30);
-  const geminiResult = await extractDeliverySlipFromPdf(buffer, knownSiteNames);
-
-  // フォールバック: PDF直接解析が失敗した場合はOCRテキスト版で再試行
-  if (geminiResult.confidence === 0 && geminiResult.materials.length === 0) {
-    logger.info(`PDF直接解析で抽出失敗、OCRテキスト版でリトライ: ${originalName}`);
-    const extractResult = await extractPdfTextFromBuffer(buffer);
-    if (extractResult.success) {
-      const retryResult = await extractDeliverySlip(extractResult.text, knownSiteNames);
-      if (retryResult.confidence > geminiResult.confidence) {
-        Object.assign(geminiResult, retryResult);
-      }
-    }
-  }
-
-  // PDFテキストも保存用に抽出（raw_text保存用）
-  const extractResult = await extractPdfTextFromBuffer(buffer);
+  // ---- Step 1: Gemini にPDFを直接送って資材明細・金額のみ抽出（OCR不要） ----
+  const geminiResult = await extractMaterialsFromPdf(buffer);
 
   let parseStatus: 'success' | 'partial' | 'failed' = 'success';
   let parseConfidence = 0;
@@ -180,28 +165,18 @@ export async function importPdfFile(opts: {
   parseStatus = geminiResult.confidence >= 0.6 ? 'success' : geminiResult.confidence > 0 ? 'partial' : 'failed';
   parseConfidence = geminiResult.confidence;
 
-  // parsed 互換オブジェクト（後続コードとの互換性維持）
-  // 現場名が取れなかった場合はグリッドの届け先をフォールバックとして使用
-  const rawResolvedSiteName = geminiResult.site_name || opts.fallbackSiteName || null;
-  if (!geminiResult.site_name && opts.fallbackSiteName) {
-    logger.info(`現場名フォールバック: Gemini未取得 → 届け先 "${opts.fallbackSiteName}" を使用`);
-  }
-  // 会社直納（会社入れ/御社入れ/貴社入れ/彩り等）は「株式会社吉田」に統一
-  const COMPANY_DELIVERY_NAMES = /^(会社入れ|御社入れ|貴社入れ|記者入れ|株式会社吉田|彩り工房|彩り|いろどり)$/;
-  const resolvedSiteName = COMPANY_DELIVERY_NAMES.test(rawResolvedSiteName ?? '')
-    ? '株式会社吉田'
-    : rawResolvedSiteName;
+  // 現場名・担当者はグリッドデータから（Geminiではない）
   const parsed = {
-    raw_site_name: resolvedSiteName,
+    raw_site_name: opts.siteName,
     delivery_date: geminiResult.delivery_date,
-    raw_orderer_name: geminiResult.orderer_name,
-    raw_person_name: geminiResult.person_name,
+    raw_orderer_name: null as string | null,
+    raw_person_name: opts.personName,
     total_amount_ex_tax: geminiResult.total_amount_ex_tax,
     total_tax: geminiResult.total_tax,
     total_amount_in_tax: geminiResult.total_amount_in_tax,
   };
 
-  logger.info(`Gemini抽出: site="${parsed.raw_site_name}" date="${parsed.delivery_date}" materials=${geminiResult.materials.length}件 confidence=${parseConfidence}`);
+  logger.info(`PDF解析: site="${parsed.raw_site_name}" person="${parsed.raw_person_name}" materials=${geminiResult.materials.length}件 confidence=${parseConfidence}`);
 
   // ---- Step 3: 現場名マッチング ----
   const siteMatch = parsed.raw_site_name
@@ -230,7 +205,7 @@ export async function importPdfFile(opts: {
           parse_status = ?, parse_confidence = ?, updated_at = ?
         WHERE id = ?
       `).run(
-        extractResult.text || null,
+        null, // raw_text不要（OCR廃止）
         parsed.delivery_date ?? null,
         parsed.raw_orderer_name ?? null,
         parsed.raw_site_name ?? null,
@@ -258,7 +233,7 @@ export async function importPdfFile(opts: {
           source_type: 'kaken_pdf',
           source_file_name: originalName,
           source_unique_key: uniqueKey,
-          raw_text: extractResult.text || undefined,
+          raw_text: undefined,
           delivery_date: parsed.delivery_date ?? undefined,
           raw_orderer_name: parsed.raw_orderer_name ?? undefined,
           raw_site_name: parsed.raw_site_name ?? undefined,
@@ -550,6 +525,18 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
     }
 
     emit({ type: 'total', total: newRows.length, skipped: result.skipped_count });
+
+    // ---- グリッド現場名をGeminiで一括正規化 ----
+    emit({ type: 'phase', phase: '現場名を正規化中…' });
+    const rawSiteNames = newRows.map((row: any) => {
+      // 現場名があればそれを使う、なければお届け先
+      return (row.siteName?.trim() || row.description?.trim() || '');
+    });
+    const siteNameMapping = await normalizeSiteNames(rawSiteNames);
+    logger.info(`現場名正規化完了: ${Object.keys(siteNameMapping).length}件マッピング`);
+
+    // ---- PDF解析フェーズ ----
+    emit({ type: 'phase', phase: 'PDF解析中…' });
     // ---- 各行を処理 ----
     let processedCount = 0;
     for (const row of newRows) {
@@ -593,13 +580,18 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
 
       // ---- PDF 解析・保存 ----
       try {
-        // グリッドの siteName → なければ description（届け先）をフォールバックに使用
-        const gridSiteName = row.siteName || row.description || undefined;
+        // 現場名: グリッドから取得 → Gemini正規化済み
+        const rawSiteName = row.siteName?.trim() || row.description?.trim() || '';
+        const normalizedSiteName = siteNameMapping[rawSiteName] || rawSiteName || null;
+        // 担当者: グリッドから取得
+        const personName = row.contact?.trim() || null;
+
         const importResult = await importPdfFile({
           buffer:           pdfBuffer,
           originalName:     row.pdfFilename || `${slipNumber}.pdf`,
           sourceUniqueKey:  slipNumber,
-          fallbackSiteName: gridSiteName,
+          siteName:         normalizedSiteName,
+          personName:       personName,
         });
 
         if (importResult.deliveryImport.parse_status === 'failed') {
@@ -797,29 +789,16 @@ export async function reparseDeliveryImport(id: number): Promise<ImportPdfResult
   const di = repo.findDeliveryImportById(id);
   if (!di) throw new Error(`delivery_import ${id} が見つかりません`);
 
-  const knownSiteNames = repo.getRecentSiteNames(30);
-
-  // PDF直接解析を試行
+  // PDF直接解析を試行（資材明細のみ）
   const pdfDir = path.resolve(process.env.STORAGE_BASE_PATH ?? './storage', 'pdf_raw');
   const pdfFiles = fs.existsSync(pdfDir) ? fs.readdirSync(pdfDir).filter(f => f.startsWith(`${id}_`)) : [];
-  let geminiResult;
-  if (pdfFiles.length > 0) {
-    const pdfBuffer = fs.readFileSync(path.join(pdfDir, pdfFiles[0]));
-    geminiResult = await extractDeliverySlipFromPdf(pdfBuffer, knownSiteNames);
-    logger.info(`再解析(PDF直接): id=${id}`);
-  } else if (di.raw_text) {
-    geminiResult = await extractDeliverySlip(di.raw_text, knownSiteNames);
-    logger.info(`再解析(OCRテキスト): id=${id}`);
-  } else {
-    throw new Error('PDFファイルもraw_textも保存されていないため再解析できません');
+  if (pdfFiles.length === 0) {
+    throw new Error('PDFファイルが保存されていないため再解析できません');
   }
+  const pdfBuffer = fs.readFileSync(path.join(pdfDir, pdfFiles[0]));
+  const geminiResult = await extractMaterialsFromPdf(pdfBuffer);
+  logger.info(`再解析(PDF直接): id=${id}`);
   const parseStatus = geminiResult.confidence >= 0.6 ? 'success' : 'partial';
-
-  // 現場名変換
-  const COMPANY_DELIVERY_NAMES = /^(会社入れ|御社入れ|貴社入れ|記者入れ|株式会社吉田|彩り工房|彩り|いろどり)$/;
-  const resolvedSiteName = COMPANY_DELIVERY_NAMES.test(geminiResult.site_name ?? '')
-    ? '株式会社吉田'
-    : geminiResult.site_name;
 
   const db = getDb();
   const result = db.transaction(() => {
@@ -829,15 +808,14 @@ export async function reparseDeliveryImport(id: number): Promise<ImportPdfResult
     });
 
     const now = new Date().toISOString();
+    // 現場名・担当者は変更しない（グリッドデータが正）。資材明細・金額のみ更新。
     db.prepare(
       `UPDATE delivery_imports
-       SET raw_site_name = ?, raw_person_name = ?, delivery_date = ?,
+       SET delivery_date = ?,
            total_amount_ex_tax = ?, total_tax = ?, total_amount_in_tax = ?,
            updated_at = ?
        WHERE id = ?`
     ).run(
-      resolvedSiteName ?? null,
-      geminiResult.person_name ?? null,
       geminiResult.delivery_date ?? null,
       geminiResult.total_amount_ex_tax ?? null,
       geminiResult.total_tax ?? null,
