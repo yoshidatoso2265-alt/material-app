@@ -139,56 +139,7 @@ export default function DeliveryImportsPage() {
 
   return (
     <div className="p-4 space-y-5 max-w-2xl mx-auto">
-      <h1 className="text-xl font-bold text-white">取込</h1>
-
-      {/* 取得開始日 */}
-      <div className="space-y-1">
-        <p className="text-white/60 text-xs">取得開始日（空欄 = 自動）</p>
-        <input
-          type="date"
-          value={dateFrom}
-          onChange={e => setDateFrom(e.target.value)}
-          className="rounded-lg border border-white/20 bg-white/10 text-white px-3 py-2 text-sm w-full"
-        />
-        {dateFrom && (
-          <p className="text-white/40 text-xs">{dateFrom} 〜 今日 で取得（重複はスキップ）</p>
-        )}
-      </div>
-
-      {/* 更新ボタン */}
-      <button
-        onClick={handleUpdate}
-        disabled={updating}
-        className="w-full py-4 rounded-xl bg-violet-600 text-white font-bold text-base disabled:opacity-50 flex items-center justify-center gap-2"
-      >
-        {updating ? <><LoadingSpinner /><span>取込中…</span></> : '化研マテリアルから更新'}
-      </button>
-
-      {/* 進捗バー */}
-      <ProgressBar progress={progress} />
-
-      {/* エラー */}
-      {error && (
-        <div className="bg-red-500/20 border border-red-400/30 rounded-xl px-4 py-3 text-red-300 text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* 最終取込結果 */}
-      {lastSync && (
-        <div className="bg-white/10 rounded-xl px-4 py-3 text-sm space-y-1">
-          <p className="text-white/60 text-xs">最終取込 ({lastSync.date_from} 〜 {lastSync.date_to})</p>
-          <div className="flex gap-4 text-white">
-            <span>取得 {lastSync.fetched_count}</span>
-            <span>新規 {lastSync.imported_count}</span>
-            <span>スキップ {lastSync.skipped_count}</span>
-            {lastSync.failed_count > 0 && <span className="text-red-400">失敗 {lastSync.failed_count}</span>}
-          </div>
-          {lastSync.error_summary && (
-            <p className="text-red-300 text-xs">{lastSync.error_summary}</p>
-          )}
-        </div>
-      )}
+      <h1 className="text-xl font-bold text-white">納品書</h1>
 
       {/* 取込済みリスト */}
       <section>
