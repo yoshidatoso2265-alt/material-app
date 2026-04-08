@@ -571,7 +571,8 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
       if (!pdfBuffer) {
         // PDF 取得失敗: グリッドデータだけで最低限のレコードを作成する
         logger.warn(`PDF取得失敗: ${slipNumber} — グリッドデータで部分登録`);
-        _saveGridOnlyRecord(slipNumber, row);
+        const gridSiteName = row.siteName?.trim() || row.description?.trim() || '';
+        _saveGridOnlyRecord(slipNumber, row, siteNameMapping[gridSiteName] || gridSiteName || null);
         result.failed_count++;
         result.warnings.push(`${slipNumber}: PDFのダウンロードに失敗（グリッドデータで登録）`);
         emit({ type: 'item', current: processedCount, total: newRows.length, slipNumber, status: 'fail' });
@@ -637,13 +638,11 @@ export async function runKakenUpdate(opts?: { dateFrom?: string; onProgress?: (e
  */
 function _saveGridOnlyRecord(
   slipNumber: string,
-  row: { deliveryDate: string; siteName: string; description: string; amount: number | null }
+  row: { deliveryDate: string; siteName: string; description: string; amount: number | null; contact?: string },
+  normalizedSiteName: string | null,
 ): void {
   try {
-    // 現場名決定: グリッドのsite名 → なければ "彩り"（会社への直納）
-    const COMPANY_DELIVERY_NAMES = /^(会社入れ|御社入れ|貴社入れ|株式会社吉田|彩り工房)$/;
-    const rawSiteRaw = row.siteName || '会社入れ';
-    const rawSiteName = COMPANY_DELIVERY_NAMES.test(rawSiteRaw) ? '彩り' : rawSiteRaw;
+    const rawSiteName = normalizedSiteName || row.siteName || row.description || null;
 
     // YYYY/MM/DD → YYYY-MM-DD
     const deliveryDate = row.deliveryDate
@@ -663,14 +662,15 @@ function _saveGridOnlyRecord(
       return;
     }
 
-    const siteMatch = matchSiteForDeliveryImport(rawSiteName);
+    const siteMatch = rawSiteName ? matchSiteForDeliveryImport(rawSiteName) : { status: 'unmatched' as const, candidates: [] };
 
     repo.createDeliveryImport({
       source_type:      'kaken_pdf',
       source_file_name: `${slipNumber}.pdf`,
       source_unique_key: slipNumber,
       delivery_date:    deliveryDate,
-      raw_site_name:    rawSiteName,
+      raw_site_name:    rawSiteName ?? undefined,
+      raw_person_name:  row.contact?.trim() || undefined,
       total_amount_in_tax: row.amount ?? undefined,
       matched_site_id:  siteMatch.matchedSiteId,
       matched_site_name: siteMatch.matchedSiteName,
