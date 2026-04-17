@@ -450,19 +450,23 @@ export function getSummaryByItem(opts: {
     .prepare(
       `SELECT
          dil.item_name_raw,
-         COALESCE(SUM(dil.amount_in_tax), SUM(dil.amount_ex_tax), 0) as total_amount,
+         COALESCE(SUM(dil.amount_ex_tax), 0) as total_amount_ex_tax,
+         ROUND(COALESCE(SUM(dil.amount_ex_tax), 0) * 0.1) as total_tax,
+         ROUND(COALESCE(SUM(dil.amount_ex_tax), 0) * 1.1) as total_amount_in_tax,
          CASE WHEN COUNT(DISTINCT dil.unit) <= 1 THEN SUM(dil.quantity) ELSE NULL END as total_qty,
          CASE WHEN COUNT(DISTINCT dil.unit) = 1  THEN MAX(dil.unit)     ELSE NULL END as unit,
          CASE WHEN SUM(dil.quantity) > 0
               THEN ROUND(COALESCE(SUM(dil.amount_ex_tax), 0) * 1.0 / SUM(dil.quantity), 0)
               ELSE NULL END as avg_unit_price,
          COUNT(*) as delivery_count,
-         COUNT(DISTINCT COALESCE(di.matched_site_name, di.raw_site_name)) as site_count
+         COUNT(DISTINCT COALESCE(di.matched_site_name, di.raw_site_name)) as site_count,
+         MIN(di.delivery_date) as first_delivery_date,
+         MAX(di.delivery_date) as last_delivery_date
        FROM delivery_import_lines dil
        JOIN delivery_imports di ON di.id = dil.delivery_import_id
        ${where}
        GROUP BY dil.item_name_raw
-       ORDER BY total_amount DESC`
+       ORDER BY total_amount_in_tax DESC`
     )
     .all(...params) as ItemSummaryRow[];
 }
@@ -529,9 +533,13 @@ export interface SiteItemSummaryRow {
   unit: string | null;
   avg_unit_price: number | null;
   total_amount_ex_tax: number;
+  total_tax: number;
+  total_amount_in_tax: number;
   delivery_count: number;
   is_freight: number;
   is_misc_charge: number;
+  first_delivery_date: string | null;
+  last_delivery_date: string | null;
 }
 
 export function getSiteItems(opts: {
@@ -561,9 +569,13 @@ export function getSiteItems(opts: {
               THEN ROUND(COALESCE(SUM(dil.amount_ex_tax), 0) * 1.0 / SUM(dil.quantity), 0)
               ELSE NULL END AS avg_unit_price,
          COALESCE(SUM(dil.amount_ex_tax), 0) AS total_amount_ex_tax,
+         ROUND(COALESCE(SUM(dil.amount_ex_tax), 0) * 0.1) AS total_tax,
+         ROUND(COALESCE(SUM(dil.amount_ex_tax), 0) * 1.1) AS total_amount_in_tax,
          COUNT(*) AS delivery_count,
          dil.is_freight,
-         dil.is_misc_charge
+         dil.is_misc_charge,
+         MIN(di.delivery_date) AS first_delivery_date,
+         MAX(di.delivery_date) AS last_delivery_date
        FROM delivery_import_lines dil
        JOIN delivery_imports di ON di.id = dil.delivery_import_id
        ${where}

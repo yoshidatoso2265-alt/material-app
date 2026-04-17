@@ -86,12 +86,16 @@ export interface SiteSummaryRow {
 
 export interface ItemSummaryRow {
   item_name_raw: string;
-  total_amount: number;
+  total_amount_ex_tax: number;
+  total_tax: number;
+  total_amount_in_tax: number;
   total_qty: number | null;
   unit: string | null;
   avg_unit_price: number | null;
   delivery_count: number;
   site_count: number;
+  first_delivery_date: string | null;
+  last_delivery_date: string | null;
 }
 
 export interface DateSummaryRow {
@@ -113,9 +117,13 @@ export interface SiteItemSummaryRow {
   unit: string | null;
   avg_unit_price: number | null;
   total_amount_ex_tax: number;
+  total_tax: number;
+  total_amount_in_tax: number;
   delivery_count: number;
   is_freight: number;
   is_misc_charge: number;
+  first_delivery_date: string | null;
+  last_delivery_date: string | null;
 }
 
 export interface ListParams {

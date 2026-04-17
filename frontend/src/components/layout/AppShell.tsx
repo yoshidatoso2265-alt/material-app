@@ -1,4 +1,3 @@
-import { MobileNav } from './MobileNav'
 import { MobileHeader } from './MobileHeader'
 
 interface AppShellProps {
@@ -12,14 +11,9 @@ export function AppShell({ children }: AppShellProps) {
       <MobileHeader />
 
       {/* メインコンテンツ */}
-      <main className="flex-1 p-4 pb-24 animate-fade-in">
+      <main className="flex-1 p-4 pb-6 animate-fade-in">
         {children}
       </main>
-
-      {/* ボトムナビ（常時表示） */}
-      <div className="fixed bottom-0 inset-x-0 z-40">
-        <MobileNav />
-      </div>
     </div>
   )
 }

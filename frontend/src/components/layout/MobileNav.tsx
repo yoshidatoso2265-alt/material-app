@@ -1,10 +1,9 @@
 import { NavLink } from 'react-router-dom'
-import { BarChart2, Download } from 'lucide-react'
+import { BarChart2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
   { to: '/delivery-agg',     icon: BarChart2,       label: '集計' },
-  { to: '/delivery-imports',  icon: Download,        label: '取込' },
 ]
 
 export function MobileNav() {
