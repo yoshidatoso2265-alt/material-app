@@ -397,23 +397,27 @@ function ItemListView({
                 <div className="flex justify-between items-start gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-sm leading-snug">{hankakuToZenkaku(it.item_name_raw)}</p>
-                    <p className="text-white/40 text-xs mt-0.5">
-                      {it.avg_unit_price != null && it.total_qty != null
-                        ? `${formatCurrency(it.avg_unit_price)}/${it.unit || '個'} × ${it.total_qty}${it.unit || '個'}`
-                        : `${it.delivery_count}回 · ${it.site_count}現場`}
-                    </p>
+                    {it.avg_unit_price != null && it.total_qty != null ? (
+                      <>
+                        <p className="text-white/40 text-xs mt-0.5">
+                          {formatCurrency(it.avg_unit_price)}/{it.unit || '個'} × {it.total_qty}{it.unit || '個'}
+                        </p>
+                        <p className="text-white/30 text-xs">
+                          (税抜 {formatCurrency(it.avg_unit_price)} + 税 {formatCurrency(Math.round(it.avg_unit_price * 0.1))})/{it.unit || '個'}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-white/40 text-xs mt-0.5">
+                        {it.delivery_count}回 · {it.site_count}現場
+                      </p>
+                    )}
                     <p className="text-white/30 text-xs mt-0.5">
                       {it.first_delivery_date === it.last_delivery_date
                         ? formatDate(it.first_delivery_date || '')
                         : `${formatDate(it.first_delivery_date || '')} 〜 ${formatDate(it.last_delivery_date || '')}`}
                     </p>
                   </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-white font-bold text-sm">{formatCurrency(it.total_amount_in_tax)}</span>
-                    <p className="text-white/30 text-xs mt-0.5">
-                      税抜 {formatCurrency(it.total_amount_ex_tax)} + 税 {formatCurrency(it.total_tax)}
-                    </p>
-                  </div>
+                  <span className="text-white font-bold text-sm shrink-0">{formatCurrency(it.total_amount_in_tax)}</span>
                 </div>
               </div>
             ))}
@@ -479,9 +483,14 @@ function SiteItemsView({
           <p className="text-white text-sm leading-snug">{hankakuToZenkaku(it.item_name)}</p>
           {it.spec && <p className="text-white/50 text-xs mt-0.5 leading-snug">{it.spec}</p>}
           {it.avg_unit_price != null && it.total_qty != null ? (
-            <p className="text-white/40 text-xs mt-0.5">
-              {formatCurrency(it.avg_unit_price)}/{it.unit || '個'} × {it.total_qty}{it.unit || '個'} · {it.delivery_count}回
-            </p>
+            <>
+              <p className="text-white/40 text-xs mt-0.5">
+                {formatCurrency(it.avg_unit_price)}/{it.unit || '個'} × {it.total_qty}{it.unit || '個'} · {it.delivery_count}回
+              </p>
+              <p className="text-white/30 text-xs">
+                (税抜 {formatCurrency(it.avg_unit_price)} + 税 {formatCurrency(Math.round(it.avg_unit_price * 0.1))})/{it.unit || '個'}
+              </p>
+            </>
           ) : it.total_qty != null && it.unit != null ? (
             <p className="text-white/40 text-xs mt-0.5">合計 {it.total_qty}{it.unit} · {it.delivery_count}回</p>
           ) : (
@@ -493,12 +502,7 @@ function SiteItemsView({
               : `${formatDate(it.first_delivery_date || '')} 〜 ${formatDate(it.last_delivery_date || '')}`}
           </p>
         </div>
-        <div className="text-right shrink-0">
-          <span className="text-white font-bold text-sm">{formatCurrency(it.total_amount_in_tax)}</span>
-          <p className="text-white/30 text-xs mt-0.5">
-            税抜 {formatCurrency(it.total_amount_ex_tax)} + 税 {formatCurrency(it.total_tax)}
-          </p>
-        </div>
+        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(it.total_amount_in_tax)}</span>
       </div>
     </div>
   )
