@@ -213,24 +213,32 @@ function SiteListView({
           {query ? '一致する現場がありません' : 'データなし'}
         </p>
       ) : (
-        <div className="space-y-1">
-          {filtered.map((s, i) => (
-            <button
-              key={i}
-              onClick={() => onSelect(s)}
-              className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
-            >
-              <div className="text-left flex-1 min-w-0 mr-2">
-                <p className="text-white font-medium text-sm truncate">{s.site_name || '（現場名なし）'}</p>
-                <p className="text-white/50 text-xs mt-0.5">{s.import_count}件 · {s.item_count}品目</p>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-white font-bold text-sm">{formatCurrency(s.total_amount)}</span>
-                <ChevronRight size={16} className="text-white/40" />
-              </div>
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="space-y-1">
+            {filtered.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => onSelect(s)}
+                className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
+              >
+                <div className="text-left flex-1 min-w-0 mr-2">
+                  <p className="text-white font-medium text-sm truncate">{s.site_name || '（現場名なし）'}</p>
+                  <p className="text-white/50 text-xs mt-0.5">{s.import_count}件 · {s.item_count}品目</p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-white font-bold text-sm">{formatCurrency(s.total_amount)}</span>
+                  <ChevronRight size={16} className="text-white/40" />
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 bg-white/20 rounded-xl px-4 py-3 flex justify-between items-center">
+            <span className="text-white/70 text-sm font-medium">合計</span>
+            <span className="text-white font-bold text-base">
+              {formatCurrency(filtered.reduce((sum, s) => sum + s.total_amount, 0))}
+            </span>
+          </div>
+        </>
       )}
     </>
   )
@@ -262,24 +270,32 @@ function PersonListView({
   if (persons.length === 0) return <p className="text-white/40 text-sm text-center py-10">データなし</p>
 
   return (
-    <div className="space-y-1">
-      {persons.map((p, i) => (
-        <button
-          key={i}
-          onClick={() => onSelect(p)}
-          className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
-        >
-          <div className="text-left flex-1 min-w-0 mr-2">
-            <p className="text-white font-medium text-sm truncate">{p.raw_person_name || '（担当者なし）'}</p>
-            <p className="text-white/50 text-xs mt-0.5">{p.import_count}件</p>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-white font-bold text-sm">{formatCurrency(p.total_amount)}</span>
-            <ChevronRight size={16} className="text-white/40" />
-          </div>
-        </button>
-      ))}
-    </div>
+    <>
+      <div className="space-y-1">
+        {persons.map((p, i) => (
+          <button
+            key={i}
+            onClick={() => onSelect(p)}
+            className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
+          >
+            <div className="text-left flex-1 min-w-0 mr-2">
+              <p className="text-white font-medium text-sm truncate">{p.raw_person_name || '（担当者なし）'}</p>
+              <p className="text-white/50 text-xs mt-0.5">{p.import_count}件</p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-white font-bold text-sm">{formatCurrency(p.total_amount)}</span>
+              <ChevronRight size={16} className="text-white/40" />
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 bg-white/20 rounded-xl px-4 py-3 flex justify-between items-center">
+        <span className="text-white/70 text-sm font-medium">合計</span>
+        <span className="text-white font-bold text-base">
+          {formatCurrency(persons.reduce((sum, p) => sum + p.total_amount, 0))}
+        </span>
+      </div>
+    </>
   )
 }
 
@@ -309,24 +325,32 @@ function DateListView({
   if (dates.length === 0) return <p className="text-white/40 text-sm text-center py-10">データなし</p>
 
   return (
-    <div className="space-y-1">
-      {dates.map((d, i) => (
-        <button
-          key={i}
-          onClick={() => onSelect(d.delivery_date)}
-          className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
-        >
-          <div className="text-left">
-            <p className="text-white font-medium text-sm">{formatDate(d.delivery_date)}</p>
-            <p className="text-white/50 text-xs mt-0.5">{d.import_count}件</p>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-white font-bold text-sm">{formatCurrency(d.total_amount)}</span>
-            <ChevronRight size={16} className="text-white/40" />
-          </div>
-        </button>
-      ))}
-    </div>
+    <>
+      <div className="space-y-1">
+        {dates.map((d, i) => (
+          <button
+            key={i}
+            onClick={() => onSelect(d.delivery_date)}
+            className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
+          >
+            <div className="text-left">
+              <p className="text-white font-medium text-sm">{formatDate(d.delivery_date)}</p>
+              <p className="text-white/50 text-xs mt-0.5">{d.import_count}件</p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-white font-bold text-sm">{formatCurrency(d.total_amount)}</span>
+              <ChevronRight size={16} className="text-white/40" />
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 bg-white/20 rounded-xl px-4 py-3 flex justify-between items-center">
+        <span className="text-white/70 text-sm font-medium">合計</span>
+        <span className="text-white font-bold text-base">
+          {formatCurrency(dates.reduce((sum, d) => sum + d.total_amount, 0))}
+        </span>
+      </div>
+    </>
   )
 }
 
@@ -366,21 +390,31 @@ function ItemListView({
           {query ? '一致する材料がありません' : 'データなし'}
         </p>
       ) : (
-        <div className="bg-white/10 rounded-xl overflow-hidden divide-y divide-white/10">
-          {filtered.map((it, i) => (
-            <div key={i} className="px-4 py-3">
-              <div className="flex justify-between items-start gap-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm leading-snug">{hankakuToZenkaku(it.item_name_raw)}</p>
-                  <p className="text-white/40 text-xs mt-0.5">
-                    {it.delivery_count}回 · {it.site_count}現場
-                  </p>
+        <>
+          <div className="bg-white/10 rounded-xl overflow-hidden divide-y divide-white/10">
+            {filtered.map((it, i) => (
+              <div key={i} className="px-4 py-3">
+                <div className="flex justify-between items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm leading-snug">{hankakuToZenkaku(it.item_name_raw)}</p>
+                    <p className="text-white/40 text-xs mt-0.5">
+                      {it.avg_unit_price != null && it.total_qty != null
+                        ? `${formatCurrency(it.avg_unit_price)}/${it.unit || '個'} × ${it.total_qty}${it.unit || '個'}`
+                        : `${it.delivery_count}回 · ${it.site_count}現場`}
+                    </p>
+                  </div>
+                  <span className="text-white font-bold text-sm shrink-0">{formatCurrency(it.total_amount)}</span>
                 </div>
-                <span className="text-white font-bold text-sm shrink-0">{formatCurrency(it.total_amount)}</span>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+          <div className="mt-3 bg-white/20 rounded-xl px-4 py-3 flex justify-between items-center">
+            <span className="text-white/70 text-sm font-medium">合計</span>
+            <span className="text-white font-bold text-base">
+              {formatCurrency(filtered.reduce((sum, it) => sum + it.total_amount, 0))}
+            </span>
+          </div>
+        </>
       )}
     </>
   )
@@ -420,10 +454,13 @@ function SiteItemsView({
         <div className="flex-1 min-w-0">
           <p className="text-white text-sm leading-snug">{hankakuToZenkaku(it.item_name)}</p>
           {it.spec && <p className="text-white/50 text-xs mt-0.5 leading-snug">{it.spec}</p>}
-          {it.total_qty != null && it.unit != null && (
+          {it.avg_unit_price != null && it.total_qty != null ? (
+            <p className="text-white/40 text-xs mt-0.5">
+              {formatCurrency(it.avg_unit_price)}/{it.unit || '個'} × {it.total_qty}{it.unit || '個'} · {it.delivery_count}回
+            </p>
+          ) : it.total_qty != null && it.unit != null ? (
             <p className="text-white/40 text-xs mt-0.5">合計 {it.total_qty}{it.unit} · {it.delivery_count}回</p>
-          )}
-          {it.total_qty == null && (
+          ) : (
             <p className="text-white/40 text-xs mt-0.5">{it.delivery_count}回</p>
           )}
         </div>

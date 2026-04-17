@@ -87,6 +87,9 @@ export interface SiteSummaryRow {
 export interface ItemSummaryRow {
   item_name_raw: string;
   total_amount: number;
+  total_qty: number | null;
+  unit: string | null;
+  avg_unit_price: number | null;
   delivery_count: number;
   site_count: number;
 }
@@ -108,6 +111,7 @@ export interface SiteItemSummaryRow {
   spec: string | null;
   total_qty: number | null;
   unit: string | null;
+  avg_unit_price: number | null;
   total_amount_ex_tax: number;
   delivery_count: number;
   is_freight: number;

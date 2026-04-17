@@ -451,6 +451,11 @@ export function getSummaryByItem(opts: {
       `SELECT
          dil.item_name_raw,
          COALESCE(SUM(dil.amount_in_tax), SUM(dil.amount_ex_tax), 0) as total_amount,
+         CASE WHEN COUNT(DISTINCT dil.unit) <= 1 THEN SUM(dil.quantity) ELSE NULL END as total_qty,
+         CASE WHEN COUNT(DISTINCT dil.unit) = 1  THEN MAX(dil.unit)     ELSE NULL END as unit,
+         CASE WHEN SUM(dil.quantity) > 0
+              THEN ROUND(COALESCE(SUM(dil.amount_ex_tax), 0) * 1.0 / SUM(dil.quantity), 0)
+              ELSE NULL END as avg_unit_price,
          COUNT(*) as delivery_count,
          COUNT(DISTINCT COALESCE(di.matched_site_name, di.raw_site_name)) as site_count
        FROM delivery_import_lines dil
@@ -522,6 +527,7 @@ export interface SiteItemSummaryRow {
   spec: string | null;
   total_qty: number | null;
   unit: string | null;
+  avg_unit_price: number | null;
   total_amount_ex_tax: number;
   delivery_count: number;
   is_freight: number;
@@ -551,6 +557,9 @@ export function getSiteItems(opts: {
          dil.spec_raw AS spec,
          CASE WHEN COUNT(DISTINCT dil.unit) <= 1 THEN SUM(dil.quantity) ELSE NULL END AS total_qty,
          CASE WHEN COUNT(DISTINCT dil.unit) = 1  THEN MAX(dil.unit)     ELSE NULL END AS unit,
+         CASE WHEN SUM(dil.quantity) > 0
+              THEN ROUND(COALESCE(SUM(dil.amount_ex_tax), 0) * 1.0 / SUM(dil.quantity), 0)
+              ELSE NULL END AS avg_unit_price,
          COALESCE(SUM(dil.amount_ex_tax), 0) AS total_amount_ex_tax,
          COUNT(*) AS delivery_count,
          dil.is_freight,
