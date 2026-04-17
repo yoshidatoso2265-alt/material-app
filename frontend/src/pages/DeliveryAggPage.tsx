@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
-import { ChevronRight, ChevronLeft, Building2, User, CalendarDays, Package, Truck } from 'lucide-react'
-import { formatCurrency, formatDate, hankakuToZenkaku } from '@/lib/utils'
+import { useState, useEffect, useMemo } from 'react'
+import { ChevronRight, ChevronLeft, Building2, User, CalendarDays, Package, Truck, Search, X } from 'lucide-react'
+import { formatCurrency, formatDate, hankakuToZenkaku, fuzzyMatch } from '@/lib/utils'
 import {
   deliveryImportsApi,
   type SiteSummaryRow,
   type PersonSummaryRow,
   type DateSummaryRow,
+  type ItemSummaryRow,
   type SiteItemSummaryRow,
   type DeliveryImportListItem,
   type DeliveryImportDetail,
@@ -16,7 +17,7 @@ import { LoadingSpinner } from '@/components/common/LoadingSpinner'
 // 型・ユーティリティ
 // ============================================================
 
-type TopTab = 'site' | 'person' | 'date'
+type TopTab = 'site' | 'person' | 'date' | 'item'
 
 type View =
   | { type: 'top' }
@@ -102,6 +103,41 @@ function DateFilterBar({
 }
 
 // ============================================================
+// SearchInput
+// ============================================================
+
+function SearchInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+}) {
+  return (
+    <div className="relative mb-3">
+      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-white/10 text-white text-sm rounded-xl pl-9 pr-8 py-2.5 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-white/30"
+      />
+      {value && (
+        <button
+          onClick={() => onChange('')}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70"
+        >
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ============================================================
 // TopTabBar
 // ============================================================
 
@@ -114,6 +150,7 @@ function TopTabBar({
 }) {
   const tabs: { id: TopTab; label: string; icon: React.ReactNode }[] = [
     { id: 'site',   label: '現場',  icon: <Building2 size={13} /> },
+    { id: 'item',   label: '材料',  icon: <Package size={13} /> },
     { id: 'person', label: '担当者', icon: <User size={13} /> },
     { id: 'date',   label: '日付',  icon: <CalendarDays size={13} /> },
   ]
@@ -149,6 +186,7 @@ function SiteListView({
 }) {
   const [sites, setSites] = useState<SiteSummaryRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -158,28 +196,43 @@ function SiteListView({
       .finally(() => setLoading(false))
   }, [dateFilter, personFilter])
 
+  const filtered = useMemo(
+    () => sites.filter((s) => fuzzyMatch(query, s.site_name || '')),
+    [sites, query]
+  )
+
   if (loading) return <div className="flex justify-center py-10"><LoadingSpinner /></div>
-  if (sites.length === 0) return <p className="text-white/40 text-sm text-center py-10">データなし</p>
 
   return (
-    <div className="space-y-1">
-      {sites.map((s, i) => (
-        <button
-          key={i}
-          onClick={() => onSelect(s)}
-          className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
-        >
-          <div className="text-left flex-1 min-w-0 mr-2">
-            <p className="text-white font-medium text-sm truncate">{s.site_name || '（現場名なし）'}</p>
-            <p className="text-white/50 text-xs mt-0.5">{s.import_count}件 · {s.item_count}品目</p>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-white font-bold text-sm">{formatCurrency(s.total_amount)}</span>
-            <ChevronRight size={16} className="text-white/40" />
-          </div>
-        </button>
-      ))}
-    </div>
+    <>
+      {!personFilter && (
+        <SearchInput value={query} onChange={setQuery} placeholder="現場名であいまい検索..." />
+      )}
+      {filtered.length === 0 ? (
+        <p className="text-white/40 text-sm text-center py-10">
+          {query ? '一致する現場がありません' : 'データなし'}
+        </p>
+      ) : (
+        <div className="space-y-1">
+          {filtered.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => onSelect(s)}
+              className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
+            >
+              <div className="text-left flex-1 min-w-0 mr-2">
+                <p className="text-white font-medium text-sm truncate">{s.site_name || '（現場名なし）'}</p>
+                <p className="text-white/50 text-xs mt-0.5">{s.import_count}件 · {s.item_count}品目</p>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-white font-bold text-sm">{formatCurrency(s.total_amount)}</span>
+                <ChevronRight size={16} className="text-white/40" />
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </>
   )
 }
 
@@ -274,6 +327,62 @@ function DateListView({
         </button>
       ))}
     </div>
+  )
+}
+
+// ============================================================
+// ItemListView（材料別集計 トップレベル）
+// ============================================================
+
+function ItemListView({
+  dateFilter,
+}: {
+  dateFilter: DateFilter
+}) {
+  const [items, setItems] = useState<ItemSummaryRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+
+  useEffect(() => {
+    setLoading(true)
+    deliveryImportsApi
+      .summaryByItem(filterToDates(dateFilter))
+      .then((r) => setItems(r.data))
+      .finally(() => setLoading(false))
+  }, [dateFilter])
+
+  const filtered = useMemo(
+    () => items.filter((it) => fuzzyMatch(query, it.item_name_raw || '')),
+    [items, query]
+  )
+
+  if (loading) return <div className="flex justify-center py-10"><LoadingSpinner /></div>
+
+  return (
+    <>
+      <SearchInput value={query} onChange={setQuery} placeholder="材料名であいまい検索..." />
+      {filtered.length === 0 ? (
+        <p className="text-white/40 text-sm text-center py-10">
+          {query ? '一致する材料がありません' : 'データなし'}
+        </p>
+      ) : (
+        <div className="bg-white/10 rounded-xl overflow-hidden divide-y divide-white/10">
+          {filtered.map((it, i) => (
+            <div key={i} className="px-4 py-3">
+              <div className="flex justify-between items-start gap-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-white text-sm leading-snug">{hankakuToZenkaku(it.item_name_raw)}</p>
+                  <p className="text-white/40 text-xs mt-0.5">
+                    {it.delivery_count}回 · {it.site_count}現場
+                  </p>
+                </div>
+                <span className="text-white font-bold text-sm shrink-0">{formatCurrency(it.total_amount)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   )
 }
 
@@ -678,6 +787,10 @@ export default function DeliveryAggPage() {
           dateFilter={dateFilter}
           onSelect={(site) => setView({ type: 'site_detail', site })}
         />
+      )}
+
+      {view.type === 'top' && activeTab === 'item' && (
+        <ItemListView dateFilter={dateFilter} />
       )}
 
       {view.type === 'top' && activeTab === 'person' && (

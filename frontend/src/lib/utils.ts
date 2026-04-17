@@ -87,3 +87,32 @@ export function formatScore(score: number | null | undefined): string {
   if (score == null) return '—'
   return `${Math.round(score * 100)}%`
 }
+
+/**
+ * あいまい検索（日本語対応）
+ * カタカナ⇔ひらがな正規化 + 全角半角正規化 + 部分一致 + サブシーケンスマッチ
+ */
+function normalizeForSearch(str: string): string {
+  return str
+    .toLowerCase()
+    // 全角英数→半角
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    // カタカナ→ひらがな
+    .replace(/[\u30A1-\u30F6]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60))
+    // 半角カタカナ→全角カタカナ→ひらがな (簡易)
+    .replace(/\s+/g, '')
+}
+
+export function fuzzyMatch(query: string, target: string): boolean {
+  if (!query) return true
+  const q = normalizeForSearch(query)
+  const t = normalizeForSearch(target)
+  // 部分一致
+  if (t.includes(q)) return true
+  // サブシーケンスマッチ（クエリの各文字が順番に出現するか）
+  let qi = 0
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) qi++
+  }
+  return qi === q.length
+}
