@@ -102,7 +102,8 @@ export interface ResolveSiteInput {
 
 export interface SiteSummaryRow {
   site_name: string;           // matched_site_name or raw_site_name
-  total_amount: number;
+  total_amount: number;        // 税込
+  total_amount_ex_tax: number; // 税抜（不明な取込は税込÷1.1で推定）
   import_count: number;
   last_delivery_date: string | null;
   item_count: number;          // 明細行数（運賃・割増除く）
@@ -125,13 +126,15 @@ export interface ItemSummaryRow {
 
 export interface DateSummaryRow {
   delivery_date: string;
-  total_amount: number;
+  total_amount: number;        // 税込
+  total_amount_ex_tax: number; // 税抜（不明な取込は税込÷1.1で推定）
   import_count: number;
 }
 
 export interface PersonSummaryRow {
   raw_person_name: string;
-  total_amount: number;
+  total_amount: number;        // 税込
+  total_amount_ex_tax: number; // 税抜（不明な取込は税込÷1.1で推定）
   import_count: number;
 }
 

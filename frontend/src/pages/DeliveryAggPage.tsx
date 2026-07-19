@@ -45,6 +45,50 @@ function filterLabel(f: DateFilter): string {
   return `${f.year}年${f.month}月`
 }
 
+/** 税抜金額（データに無い取込は税込÷1.1で推定） */
+function exTaxOf(exTax: number | null, inTax: number | null): number | null {
+  if (exTax != null) return exTax
+  if (inTax != null) return Math.round(inTax / 1.1)
+  return null
+}
+
+// ============================================================
+// TotalCard（税抜メインの合計カード。リスト先頭に置く）
+// ============================================================
+
+function TotalCard({
+  exTax,
+  tax,
+  inTax,
+  className = '',
+}: {
+  exTax: number
+  tax?: number
+  inTax?: number
+  className?: string
+}) {
+  return (
+    <div className={`bg-white/20 rounded-xl px-4 py-3 ${className}`}>
+      <div className="flex justify-between items-center">
+        <span className="text-white/70 text-sm font-medium">合計（税抜）</span>
+        <span className="text-white font-bold text-base">{formatCurrency(exTax)}</span>
+      </div>
+      {tax != null && (
+        <div className="flex justify-between items-center mt-1">
+          <span className="text-white/40 text-xs">消費税</span>
+          <span className="text-white/50 text-xs">{formatCurrency(tax)}</span>
+        </div>
+      )}
+      {inTax != null && (
+        <div className={`flex justify-between items-center${tax == null ? ' mt-1' : ''}`}>
+          <span className="text-white/40 text-xs">税込</span>
+          <span className="text-white/50 text-xs">{formatCurrency(inTax)}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ============================================================
 // DateFilterBar
 // ============================================================
@@ -214,6 +258,11 @@ function SiteListView({
         </p>
       ) : (
         <>
+          <TotalCard
+            className="mb-3"
+            exTax={filtered.reduce((sum, s) => sum + s.total_amount_ex_tax, 0)}
+            inTax={filtered.reduce((sum, s) => sum + s.total_amount, 0)}
+          />
           <div className="space-y-1">
             {filtered.map((s, i) => (
               <button
@@ -226,17 +275,11 @@ function SiteListView({
                   <p className="text-white/50 text-xs mt-0.5">{s.import_count}件 · {s.item_count}品目</p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-white font-bold text-sm">{formatCurrency(s.total_amount)}</span>
+                  <span className="text-white font-bold text-sm">{formatCurrency(s.total_amount_ex_tax)}</span>
                   <ChevronRight size={16} className="text-white/40" />
                 </div>
               </button>
             ))}
-          </div>
-          <div className="mt-3 bg-white/20 rounded-xl px-4 py-3 flex justify-between items-center">
-            <span className="text-white/70 text-sm font-medium">合計</span>
-            <span className="text-white font-bold text-base">
-              {formatCurrency(filtered.reduce((sum, s) => sum + s.total_amount, 0))}
-            </span>
           </div>
         </>
       )}
@@ -271,6 +314,11 @@ function PersonListView({
 
   return (
     <>
+      <TotalCard
+        className="mb-3"
+        exTax={persons.reduce((sum, p) => sum + p.total_amount_ex_tax, 0)}
+        inTax={persons.reduce((sum, p) => sum + p.total_amount, 0)}
+      />
       <div className="space-y-1">
         {persons.map((p, i) => (
           <button
@@ -283,17 +331,11 @@ function PersonListView({
               <p className="text-white/50 text-xs mt-0.5">{p.import_count}件</p>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-white font-bold text-sm">{formatCurrency(p.total_amount)}</span>
+              <span className="text-white font-bold text-sm">{formatCurrency(p.total_amount_ex_tax)}</span>
               <ChevronRight size={16} className="text-white/40" />
             </div>
           </button>
         ))}
-      </div>
-      <div className="mt-3 bg-white/20 rounded-xl px-4 py-3 flex justify-between items-center">
-        <span className="text-white/70 text-sm font-medium">合計</span>
-        <span className="text-white font-bold text-base">
-          {formatCurrency(persons.reduce((sum, p) => sum + p.total_amount, 0))}
-        </span>
       </div>
     </>
   )
@@ -326,6 +368,11 @@ function DateListView({
 
   return (
     <>
+      <TotalCard
+        className="mb-3"
+        exTax={dates.reduce((sum, d) => sum + d.total_amount_ex_tax, 0)}
+        inTax={dates.reduce((sum, d) => sum + d.total_amount, 0)}
+      />
       <div className="space-y-1">
         {dates.map((d, i) => (
           <button
@@ -338,17 +385,11 @@ function DateListView({
               <p className="text-white/50 text-xs mt-0.5">{d.import_count}件</p>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-white font-bold text-sm">{formatCurrency(d.total_amount)}</span>
+              <span className="text-white font-bold text-sm">{formatCurrency(d.total_amount_ex_tax)}</span>
               <ChevronRight size={16} className="text-white/40" />
             </div>
           </button>
         ))}
-      </div>
-      <div className="mt-3 bg-white/20 rounded-xl px-4 py-3 flex justify-between items-center">
-        <span className="text-white/70 text-sm font-medium">合計</span>
-        <span className="text-white font-bold text-base">
-          {formatCurrency(dates.reduce((sum, d) => sum + d.total_amount, 0))}
-        </span>
       </div>
     </>
   )
@@ -391,6 +432,12 @@ function ItemListView({
         </p>
       ) : (
         <>
+          <TotalCard
+            className="mb-3"
+            exTax={filtered.reduce((sum, it) => sum + it.total_amount_ex_tax, 0)}
+            tax={filtered.reduce((sum, it) => sum + it.total_tax, 0)}
+            inTax={filtered.reduce((sum, it) => sum + it.total_amount_in_tax, 0)}
+          />
           <div className="bg-white/10 rounded-xl overflow-hidden divide-y divide-white/10">
             {filtered.map((it, i) => (
               <div key={i} className="px-4 py-3">
@@ -398,49 +445,25 @@ function ItemListView({
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-sm leading-snug">{hankakuToZenkaku(it.item_name_raw)}</p>
                     {it.avg_unit_price != null && it.total_qty != null ? (
-                      <>
-                        <p className="text-white/40 text-xs mt-0.5">
-                          {formatCurrency(it.avg_unit_price)}/{it.unit || '個'} × {it.total_qty}{it.unit || '個'}
-                        </p>
-                        <p className="text-white/30 text-xs">
-                          (税抜 {formatCurrency(it.avg_unit_price)} + 税 {formatCurrency(Math.round(it.avg_unit_price * 0.1))})/{it.unit || '個'}
-                        </p>
-                      </>
+                      <p className="text-white/40 text-xs mt-0.5">
+                        {formatCurrency(it.avg_unit_price)}/{it.unit || '個'} × {it.total_qty}{it.unit || '個'}
+                      </p>
                     ) : (
                       <p className="text-white/40 text-xs mt-0.5">
                         {it.delivery_count}回 · {it.site_count}現場
                       </p>
                     )}
+                    <p className="text-white/30 text-xs">税込 {formatCurrency(it.total_amount_in_tax)}</p>
                     <p className="text-white/30 text-xs mt-0.5">
                       {it.first_delivery_date === it.last_delivery_date
                         ? formatDate(it.first_delivery_date || '')
                         : `${formatDate(it.first_delivery_date || '')} 〜 ${formatDate(it.last_delivery_date || '')}`}
                     </p>
                   </div>
-                  <span className="text-white font-bold text-sm shrink-0">{formatCurrency(it.total_amount_in_tax)}</span>
+                  <span className="text-white font-bold text-sm shrink-0">{formatCurrency(it.total_amount_ex_tax)}</span>
                 </div>
               </div>
             ))}
-          </div>
-          <div className="mt-3 bg-white/20 rounded-xl px-4 py-3">
-            <div className="flex justify-between items-center">
-              <span className="text-white/70 text-sm font-medium">合計（税込）</span>
-              <span className="text-white font-bold text-base">
-                {formatCurrency(filtered.reduce((sum, it) => sum + it.total_amount_in_tax, 0))}
-              </span>
-            </div>
-            <div className="flex justify-between items-center mt-1">
-              <span className="text-white/40 text-xs">税抜</span>
-              <span className="text-white/50 text-xs">
-                {formatCurrency(filtered.reduce((sum, it) => sum + it.total_amount_ex_tax, 0))}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-white/40 text-xs">消費税</span>
-              <span className="text-white/50 text-xs">
-                {formatCurrency(filtered.reduce((sum, it) => sum + it.total_tax, 0))}
-              </span>
-            </div>
           </div>
         </>
       )}
@@ -483,26 +506,22 @@ function SiteItemsView({
           <p className="text-white text-sm leading-snug">{hankakuToZenkaku(it.item_name)}</p>
           {it.spec && <p className="text-white/50 text-xs mt-0.5 leading-snug">{it.spec}</p>}
           {it.avg_unit_price != null && it.total_qty != null ? (
-            <>
-              <p className="text-white/40 text-xs mt-0.5">
-                {formatCurrency(it.avg_unit_price)}/{it.unit || '個'} × {it.total_qty}{it.unit || '個'} · {it.delivery_count}回
-              </p>
-              <p className="text-white/30 text-xs">
-                (税抜 {formatCurrency(it.avg_unit_price)} + 税 {formatCurrency(Math.round(it.avg_unit_price * 0.1))})/{it.unit || '個'}
-              </p>
-            </>
+            <p className="text-white/40 text-xs mt-0.5">
+              {formatCurrency(it.avg_unit_price)}/{it.unit || '個'} × {it.total_qty}{it.unit || '個'} · {it.delivery_count}回
+            </p>
           ) : it.total_qty != null && it.unit != null ? (
             <p className="text-white/40 text-xs mt-0.5">合計 {it.total_qty}{it.unit} · {it.delivery_count}回</p>
           ) : (
             <p className="text-white/40 text-xs mt-0.5">{it.delivery_count}回</p>
           )}
+          <p className="text-white/30 text-xs">税込 {formatCurrency(it.total_amount_in_tax)}</p>
           <p className="text-white/30 text-xs mt-0.5">
             {it.first_delivery_date === it.last_delivery_date
               ? formatDate(it.first_delivery_date || '')
               : `${formatDate(it.first_delivery_date || '')} 〜 ${formatDate(it.last_delivery_date || '')}`}
           </p>
         </div>
-        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(it.total_amount_in_tax)}</span>
+        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(it.total_amount_ex_tax)}</span>
       </div>
     </div>
   )
@@ -514,6 +533,7 @@ function SiteItemsView({
 
   return (
     <div>
+      <TotalCard className="mb-3" exTax={totalExTax} tax={totalTax} inTax={totalInTax} />
       {materials.length > 0 && (
         <div className="bg-white/10 rounded-xl overflow-hidden divide-y divide-white/10 mb-3">
           {materials.map(renderItem)}
@@ -530,20 +550,6 @@ function SiteItemsView({
           </div>
         </>
       )}
-      <div className="bg-white/20 rounded-xl px-4 py-3">
-        <div className="flex justify-between items-center">
-          <span className="text-white/70 text-sm font-medium">合計（税込）</span>
-          <span className="text-white font-bold text-base">{formatCurrency(totalInTax)}</span>
-        </div>
-        <div className="flex justify-between items-center mt-1">
-          <span className="text-white/40 text-xs">税抜</span>
-          <span className="text-white/50 text-xs">{formatCurrency(totalExTax)}</span>
-        </div>
-        <div className="flex justify-between items-center">
-          <span className="text-white/40 text-xs">消費税</span>
-          <span className="text-white/50 text-xs">{formatCurrency(totalTax)}</span>
-        </div>
-      </div>
     </div>
   )
 }
@@ -593,7 +599,10 @@ function SiteHistoryView({
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-white font-bold text-sm">
-              {imp.total_amount_in_tax != null ? formatCurrency(imp.total_amount_in_tax) : '−'}
+              {(() => {
+                const ex = exTaxOf(imp.total_amount_ex_tax, imp.total_amount_in_tax)
+                return ex != null ? formatCurrency(ex) : '−'
+              })()}
             </span>
             <ChevronRight size={16} className="text-white/40" />
           </div>
@@ -633,7 +642,7 @@ function SiteDetailView({
           <h2 className="text-white font-bold text-base truncate">{site.site_name || '（現場名なし）'}</h2>
           <p className="text-white/50 text-xs">{filterLabel(dateFilter)} · {site.import_count}件</p>
         </div>
-        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(site.total_amount)}</span>
+        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(site.total_amount_ex_tax)}</span>
       </div>
 
       {/* ミニタブ */}
@@ -689,7 +698,7 @@ function PersonDetailView({
           <h2 className="text-white font-bold text-base truncate">{person.raw_person_name || '（担当者なし）'}</h2>
           <p className="text-white/50 text-xs">{filterLabel(dateFilter)} · {person.import_count}件</p>
         </div>
-        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(person.total_amount)}</span>
+        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(person.total_amount_ex_tax)}</span>
       </div>
       <SiteListView
         dateFilter={dateFilter}
@@ -752,7 +761,10 @@ function DateDetailView({
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span className="text-white font-bold text-sm">
-                  {imp.total_amount_in_tax != null ? formatCurrency(imp.total_amount_in_tax) : '−'}
+                  {(() => {
+                    const ex = exTaxOf(imp.total_amount_ex_tax, imp.total_amount_in_tax)
+                    return ex != null ? formatCurrency(ex) : '−'
+                  })()}
                 </span>
                 <ChevronRight size={16} className="text-white/40" />
               </div>
@@ -802,11 +814,22 @@ function DeliveryDetailView({
         <p className="text-white/40 text-sm text-center py-6">データなし</p>
       ) : (
         <>
-          <div className="bg-white/15 rounded-xl px-4 py-3 flex justify-between mb-3">
-            <span className="text-white/70 text-sm">税込合計</span>
-            <span className="text-white font-bold">
-              {detail.total_amount_in_tax != null ? formatCurrency(detail.total_amount_in_tax) : '−'}
-            </span>
+          <div className="bg-white/15 rounded-xl px-4 py-3 mb-3">
+            <div className="flex justify-between items-center">
+              <span className="text-white/70 text-sm">合計（税抜）</span>
+              <span className="text-white font-bold">
+                {(() => {
+                  const ex = exTaxOf(detail.total_amount_ex_tax, detail.total_amount_in_tax)
+                  return ex != null ? formatCurrency(ex) : '−'
+                })()}
+              </span>
+            </div>
+            {detail.total_amount_in_tax != null && (
+              <div className="flex justify-between items-center mt-1">
+                <span className="text-white/40 text-xs">税込</span>
+                <span className="text-white/50 text-xs">{formatCurrency(detail.total_amount_in_tax)}</span>
+              </div>
+            )}
           </div>
 
           <div className="bg-white/10 rounded-xl overflow-hidden divide-y divide-white/10">

@@ -406,6 +406,7 @@ export function getSummaryBySite(opts: {
       `SELECT
          site_name,
          SUM(total_amount) as total_amount,
+         SUM(amount_ex_tax) as total_amount_ex_tax,
          COUNT(*) as import_count,
          MAX(last_date) as last_delivery_date,
          SUM(item_count) as item_count,
@@ -414,6 +415,7 @@ export function getSummaryBySite(opts: {
          SELECT
            COALESCE(di.matched_site_name, di.raw_site_name, '現場未分類') as site_name,
            COALESCE(di.total_amount_in_tax, di.total_amount_ex_tax, 0) as total_amount,
+           COALESCE(di.total_amount_ex_tax, CAST(ROUND(di.total_amount_in_tax / 1.1) AS INTEGER), 0) as amount_ex_tax,
            di.delivery_date as last_date,
            (SELECT COUNT(*) FROM delivery_import_lines dil
             WHERE dil.delivery_import_id = di.id
@@ -488,6 +490,7 @@ export function getSummaryByDate(opts: {
       `SELECT
          delivery_date,
          COALESCE(SUM(total_amount_in_tax), SUM(total_amount_ex_tax), 0) as total_amount,
+         SUM(COALESCE(total_amount_ex_tax, CAST(ROUND(total_amount_in_tax / 1.1) AS INTEGER), 0)) as total_amount_ex_tax,
          COUNT(*) as import_count
        FROM delivery_imports
        ${where}
@@ -517,6 +520,7 @@ export function getSummaryByPerson(opts: {
       `SELECT
          raw_person_name,
          COALESCE(SUM(total_amount_in_tax), SUM(total_amount_ex_tax), 0) as total_amount,
+         SUM(COALESCE(total_amount_ex_tax, CAST(ROUND(total_amount_in_tax / 1.1) AS INTEGER), 0)) as total_amount_ex_tax,
          COUNT(*) as import_count
        FROM delivery_imports
        ${where}
