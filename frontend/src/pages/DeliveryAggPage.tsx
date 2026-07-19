@@ -52,6 +52,68 @@ function exTaxOf(exTax: number | null, inTax: number | null): number | null {
   return null
 }
 
+/** 表示グルーピング用キー（半角/全角・大文字小文字・ローマ数字・空白のゆれを吸収） */
+const ROMAN_NUM: Record<string, string> = {
+  'ⅰ': 'i', 'ⅱ': 'ii', 'ⅲ': 'iii', 'ⅳ': 'iv', 'ⅴ': 'v',
+  'ⅵ': 'vi', 'ⅶ': 'vii', 'ⅷ': 'viii', 'ⅸ': 'ix', 'ⅹ': 'x',
+}
+function normKey(s: string | null | undefined): string {
+  return hankakuToZenkaku(s ?? '')
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .toLowerCase()
+    .replace(/[ⅰ-ⅹ]/g, (ch) => ROMAN_NUM[ch] ?? ch)
+    .replace(/\s+/g, '')
+}
+
+/** 材料別集計の表記ゆれ行を統合（ＳＰ/SP など見た目が同じ材料が別行になるのを防ぐ） */
+function mergeItemRows(rows: ItemSummaryRow[]): ItemSummaryRow[] {
+  const map = new Map<string, ItemSummaryRow>()
+  for (const r of rows) {
+    const key = normKey(r.item_name_raw)
+    const prev = map.get(key)
+    if (!prev) { map.set(key, { ...r }); continue }
+    prev.total_amount_ex_tax += r.total_amount_ex_tax
+    prev.total_tax += r.total_tax
+    prev.total_amount_in_tax += r.total_amount_in_tax
+    prev.delivery_count += r.delivery_count
+    prev.site_count = Math.max(prev.site_count, r.site_count)
+    if (prev.total_qty != null && r.total_qty != null && prev.unit === r.unit) {
+      prev.total_qty += r.total_qty
+      prev.avg_unit_price = prev.total_qty > 0 ? Math.round(prev.total_amount_ex_tax / prev.total_qty) : null
+    } else {
+      prev.total_qty = null; prev.unit = null; prev.avg_unit_price = null
+    }
+    if (r.first_delivery_date && (!prev.first_delivery_date || r.first_delivery_date < prev.first_delivery_date)) prev.first_delivery_date = r.first_delivery_date
+    if (r.last_delivery_date && (!prev.last_delivery_date || r.last_delivery_date > prev.last_delivery_date)) prev.last_delivery_date = r.last_delivery_date
+  }
+  return [...map.values()].sort((a, b) => b.total_amount_ex_tax - a.total_amount_ex_tax)
+}
+
+/** 現場別資材集計の表記ゆれ行を統合（品名+規格が実質同じ行をまとめる） */
+function mergeSiteItemRows(rows: SiteItemSummaryRow[]): SiteItemSummaryRow[] {
+  const map = new Map<string, SiteItemSummaryRow>()
+  for (const r of rows) {
+    const key = `${normKey(r.item_name)}|${normKey(r.spec)}|${r.is_freight}|${r.is_misc_charge}`
+    const prev = map.get(key)
+    if (!prev) { map.set(key, { ...r }); continue }
+    prev.total_amount_ex_tax += r.total_amount_ex_tax
+    prev.total_tax += r.total_tax
+    prev.total_amount_in_tax += r.total_amount_in_tax
+    prev.delivery_count += r.delivery_count
+    if (prev.total_qty != null && r.total_qty != null && prev.unit === r.unit) {
+      prev.total_qty += r.total_qty
+      prev.avg_unit_price = prev.total_qty > 0 ? Math.round(prev.total_amount_ex_tax / prev.total_qty) : null
+    } else {
+      prev.total_qty = null; prev.unit = null; prev.avg_unit_price = null
+    }
+    if (r.first_delivery_date && (!prev.first_delivery_date || r.first_delivery_date < prev.first_delivery_date)) prev.first_delivery_date = r.first_delivery_date
+    if (r.last_delivery_date && (!prev.last_delivery_date || r.last_delivery_date > prev.last_delivery_date)) prev.last_delivery_date = r.last_delivery_date
+  }
+  return [...map.values()].sort(
+    (a, b) => a.is_freight - b.is_freight || a.is_misc_charge - b.is_misc_charge || b.total_amount_ex_tax - a.total_amount_ex_tax
+  )
+}
+
 // ============================================================
 // TotalCard（税抜メインの合計カード。リスト先頭に置く）
 // ============================================================
@@ -101,7 +163,7 @@ function DateFilterBar({
   onChange: (f: DateFilter) => void
 }) {
   const now = new Date()
-  const months = Array.from({ length: 6 }, (_, i) => {
+  const months = Array.from({ length: 12 }, (_, i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
     return { year: d.getFullYear(), month: d.getMonth() + 1 }
   })
@@ -363,6 +425,24 @@ function DateListView({
       .finally(() => setLoading(false))
   }, [dateFilter])
 
+  // 月ごとにグルーピング（日付降順で並んでいる前提で月見出し+月合計を付ける）
+  const monthGroups = useMemo(() => {
+    const groups: { ym: string; label: string; exTax: number; inTax: number; count: number; rows: DateSummaryRow[] }[] = []
+    for (const d of dates) {
+      const ym = d.delivery_date.slice(0, 7)
+      let g = groups[groups.length - 1]
+      if (!g || g.ym !== ym) {
+        g = { ym, label: `${Number(ym.slice(0, 4))}年${Number(ym.slice(5, 7))}月`, exTax: 0, inTax: 0, count: 0, rows: [] }
+        groups.push(g)
+      }
+      g.exTax += d.total_amount_ex_tax
+      g.inTax += d.total_amount
+      g.count += d.import_count
+      g.rows.push(d)
+    }
+    return groups
+  }, [dates])
+
   if (loading) return <div className="flex justify-center py-10"><LoadingSpinner /></div>
   if (dates.length === 0) return <p className="text-white/40 text-sm text-center py-10">データなし</p>
 
@@ -373,24 +453,35 @@ function DateListView({
         exTax={dates.reduce((sum, d) => sum + d.total_amount_ex_tax, 0)}
         inTax={dates.reduce((sum, d) => sum + d.total_amount, 0)}
       />
-      <div className="space-y-1">
-        {dates.map((d, i) => (
-          <button
-            key={i}
-            onClick={() => onSelect(d.delivery_date)}
-            className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
-          >
-            <div className="text-left">
-              <p className="text-white font-medium text-sm">{formatDate(d.delivery_date)}</p>
-              <p className="text-white/50 text-xs mt-0.5">{d.import_count}件</p>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-white font-bold text-sm">{formatCurrency(d.total_amount_ex_tax)}</span>
-              <ChevronRight size={16} className="text-white/40" />
-            </div>
-          </button>
-        ))}
-      </div>
+      {monthGroups.map((g) => (
+        <div key={g.ym} className="mb-4">
+          <div className="flex justify-between items-center px-1 mb-1.5">
+            <span className="text-white/80 text-sm font-bold">{g.label}</span>
+            <span className="text-white font-bold text-sm">
+              {formatCurrency(g.exTax)}
+              <span className="text-white/40 font-normal text-xs ml-1.5">{g.count}件</span>
+            </span>
+          </div>
+          <div className="space-y-1">
+            {g.rows.map((d, i) => (
+              <button
+                key={i}
+                onClick={() => onSelect(d.delivery_date)}
+                className="w-full bg-white/10 rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/15 active:bg-white/20 transition-colors"
+              >
+                <div className="text-left">
+                  <p className="text-white font-medium text-sm">{formatDate(d.delivery_date)}</p>
+                  <p className="text-white/50 text-xs mt-0.5">{d.import_count}件</p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-white font-bold text-sm">{formatCurrency(d.total_amount_ex_tax)}</span>
+                  <ChevronRight size={16} className="text-white/40" />
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </>
   )
 }
@@ -412,7 +503,7 @@ function ItemListView({
     setLoading(true)
     deliveryImportsApi
       .summaryByItem(filterToDates(dateFilter))
-      .then((r) => setItems(r.data))
+      .then((r) => setItems(mergeItemRows(r.data)))
       .finally(() => setLoading(false))
   }, [dateFilter])
 
@@ -489,7 +580,7 @@ function SiteItemsView({
     setLoading(true)
     deliveryImportsApi
       .summarySiteItems({ site_name: siteName, ...filterToDates(dateFilter) })
-      .then((r) => setItems(r.data))
+      .then((r) => setItems(mergeSiteItemRows(r.data)))
       .finally(() => setLoading(false))
   }, [siteName, dateFilter])
 
@@ -630,6 +721,16 @@ function SiteDetailView({
   onBack: () => void
 }) {
   const [miniTab, setMiniTab] = useState<SiteMiniTab>('items')
+  // 期間フィルタ変更時にヘッダーの金額・件数を追従させる（選択時のスナップショットのままにしない）
+  const [liveSite, setLiveSite] = useState<SiteSummaryRow>(site)
+
+  useEffect(() => {
+    setLiveSite(site)
+    deliveryImportsApi.summaryBySite(filterToDates(dateFilter)).then((r) => {
+      const row = r.data.find((x) => x.site_name === site.site_name)
+      setLiveSite(row ?? { ...site, total_amount: 0, total_amount_ex_tax: 0, import_count: 0 })
+    })
+  }, [site, dateFilter])
 
   return (
     <>
@@ -640,9 +741,9 @@ function SiteDetailView({
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-white font-bold text-base truncate">{site.site_name || '（現場名なし）'}</h2>
-          <p className="text-white/50 text-xs">{filterLabel(dateFilter)} · {site.import_count}件</p>
+          <p className="text-white/50 text-xs">{filterLabel(dateFilter)} · {liveSite.import_count}件</p>
         </div>
-        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(site.total_amount_ex_tax)}</span>
+        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(liveSite.total_amount_ex_tax)}</span>
       </div>
 
       {/* ミニタブ */}
@@ -688,6 +789,17 @@ function PersonDetailView({
   onSelectSite: (s: SiteSummaryRow) => void
   onBack: () => void
 }) {
+  // 期間フィルタ変更時にヘッダーの金額・件数を追従させる
+  const [livePerson, setLivePerson] = useState<PersonSummaryRow>(person)
+
+  useEffect(() => {
+    setLivePerson(person)
+    deliveryImportsApi.summaryByPerson(filterToDates(dateFilter)).then((r) => {
+      const row = r.data.find((x) => x.raw_person_name === person.raw_person_name)
+      setLivePerson(row ?? { ...person, total_amount: 0, total_amount_ex_tax: 0, import_count: 0 })
+    })
+  }, [person, dateFilter])
+
   return (
     <>
       <div className="flex items-center gap-2 mb-4">
@@ -696,9 +808,9 @@ function PersonDetailView({
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-white font-bold text-base truncate">{person.raw_person_name || '（担当者なし）'}</h2>
-          <p className="text-white/50 text-xs">{filterLabel(dateFilter)} · {person.import_count}件</p>
+          <p className="text-white/50 text-xs">{filterLabel(dateFilter)} · {livePerson.import_count}件</p>
         </div>
-        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(person.total_amount_ex_tax)}</span>
+        <span className="text-white font-bold text-sm shrink-0">{formatCurrency(livePerson.total_amount_ex_tax)}</span>
       </div>
       <SiteListView
         dateFilter={dateFilter}
