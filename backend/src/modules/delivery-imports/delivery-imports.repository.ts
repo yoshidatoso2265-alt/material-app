@@ -387,6 +387,59 @@ export function getRecentSiteNames(withinDays = 30): string[] {
 // 集計クエリ
 // ============================================================
 
+/**
+ * 現場名の表記ゆれ吸収キー
+ * 末尾の「現場」「御中」「様分」「分」「様」と空白を除去し、全角英数を半角化して比較する。
+ * 例: 「竹内様邸現場」「竹内様邸」→ 同一キー / 「英進工業」「英進工業御中」「英進工業分」→ 同一キー
+ * ※「明治学院/明治学園」のような漢字違いは対象外（現場統合・エイリアスで人が解決する）
+ */
+export function normalizeSiteKey(name: string | null | undefined): string {
+  const original = name ?? '';
+  let s = original
+    .replace(/[\s　]+/g, '')
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .toLowerCase();
+  let prev = '';
+  while (prev !== s) {
+    prev = s;
+    s = s.replace(/(現場|御中|様分|分|様)$/, '');
+  }
+  return s || original;
+}
+
+/** 表記ゆれで分かれた現場サマリー行を統合する（表示名は最短のもの） */
+function mergeSiteSummaryRows(rows: SiteSummaryRow[]): SiteSummaryRow[] {
+  const map = new Map<string, SiteSummaryRow>();
+  for (const r of rows) {
+    const key = normalizeSiteKey(r.site_name);
+    const prev = map.get(key);
+    if (!prev) { map.set(key, { ...r }); continue; }
+    prev.total_amount += r.total_amount;
+    prev.total_amount_ex_tax += r.total_amount_ex_tax;
+    prev.import_count += r.import_count;
+    prev.item_count += r.item_count;
+    prev.unmatched_count += r.unmatched_count;
+    if ((r.last_delivery_date ?? '') > (prev.last_delivery_date ?? '')) {
+      prev.last_delivery_date = r.last_delivery_date;
+    }
+    if (r.site_name.length < prev.site_name.length) prev.site_name = r.site_name;
+  }
+  return [...map.values()].sort((a, b) => b.total_amount - a.total_amount);
+}
+
+/** 指定現場名と同一キーになる現場名バリエーション一覧（ドリルダウンの完全一致用） */
+function siteNameVariants(siteName: string): string[] {
+  const key = normalizeSiteKey(siteName);
+  const rows = getDb()
+    .prepare(
+      `SELECT DISTINCT COALESCE(matched_site_name, raw_site_name, '現場未分類') as name
+       FROM delivery_imports WHERE parse_status != 'failed'`
+    )
+    .all() as { name: string }[];
+  const variants = rows.map((r) => r.name).filter((n) => normalizeSiteKey(n) === key);
+  return variants.length > 0 ? variants : [siteName];
+}
+
 export function getSummaryBySite(opts: {
   date_from?: string;
   date_to?: string;
@@ -401,7 +454,7 @@ export function getSummaryBySite(opts: {
 
   const where = `WHERE ${conditions.join(' AND ')}`;
 
-  return getDb()
+  const rows = getDb()
     .prepare(
       `SELECT
          site_name,
@@ -429,6 +482,8 @@ export function getSummaryBySite(opts: {
        ORDER BY total_amount DESC`
     )
     .all(...params) as SiteSummaryRow[];
+
+  return mergeSiteSummaryRows(rows);
 }
 
 export function getSummaryByItem(opts: {
@@ -551,11 +606,13 @@ export function getSiteItems(opts: {
   date_from?: string;
   date_to?: string;
 }): SiteItemSummaryRow[] {
+  // 表記ゆれ（竹内様邸/竹内様邸現場 等）をすべて対象にする
+  const names = siteNameVariants(opts.site_name);
   const conditions: string[] = [
-    "COALESCE(di.matched_site_name, di.raw_site_name, '現場未分類') = ?",
+    `COALESCE(di.matched_site_name, di.raw_site_name, '現場未分類') IN (${names.map(() => '?').join(',')})`,
     "di.parse_status != 'failed'",
   ];
-  const params: (string | number)[] = [opts.site_name];
+  const params: (string | number)[] = [...names];
 
   if (opts.date_from) { conditions.push('di.delivery_date >= ?'); params.push(opts.date_from); }
   if (opts.date_to)   { conditions.push('di.delivery_date <= ?'); params.push(opts.date_to); }
